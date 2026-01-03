@@ -169,7 +169,7 @@ export default function HomePage() {
                                 {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
                             </button>
 
-                            {canReset && stage !== 'idle' && (
+                            {canReset && (
                                 <button
                                     onClick={handleReset}
                                     className="flex items-center gap-2 px-4 py-2 border-2 border-gray-300 dark:border-gray-700 hover:border-primary-400 dark:hover:border-primary-500 rounded-lg font-medium text-gray-700 dark:text-gray-300 hover:text-primary-700 dark:hover:text-primary-400 transition-all"
