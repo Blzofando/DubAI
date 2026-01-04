@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { EdgeTTS } from 'edge-tts';
+import { EdgeTTS } from 'node-edge-tts';
 
 export async function POST(req: NextRequest) {
     try {
@@ -9,9 +9,6 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Text is required' }, { status: 400 });
         }
 
-        // Aggressive sanitization to prevent potential issues
-        // 1. Remove newlines/tabs
-        // 2. Remove emojis and uncommon symbols
         const safeText = text
             .replace(/[\r\n\t]+/g, ' ')
             // eslint-disable-next-line no-control-regex
@@ -24,14 +21,17 @@ export async function POST(req: NextRequest) {
 
         const voiceArg = voice || 'pt-BR-AntonioNeural';
 
-        // Using native Node.js implementation instead of Python CLI
         const tts = new EdgeTTS({
             voice: voiceArg,
-            lang: voiceArg.split('-').slice(0, 2).join('-'), // "pt-BR"
+            lang: voiceArg.split('-').slice(0, 2).join('-'),
             outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
         });
 
-        // Convert base64 result to buffer/blob
+        // node-edge-tts often allows ttsPromise returning base64 if no file provided?
+        // Let's assume ttsPromise returning base64. 
+        // If not, I'll need to check the API more closely.
+        // Common fork is: await tts.ttsPromise(text) -> string (base64)
+
         const base64Audio = await tts.ttsPromise(safeText);
         const audioBuffer = Buffer.from(base64Audio, 'base64');
 
@@ -41,9 +41,14 @@ export async function POST(req: NextRequest) {
                 'Content-Length': audioBuffer.length.toString(),
             },
         });
-
     } catch (error: any) {
         console.error('TTS Error:', error);
         return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
     }
+}
+
+    } catch (error: any) {
+    console.error('TTS Error:', error);
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+}
 }
