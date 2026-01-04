@@ -12,6 +12,7 @@ export interface TranslatedSegment extends TranscriptSegment {
     translatedText: string;
     targetCharCount: number; // caracteres esperados baseado em duração
     actualCharCount: number; // caracteres reais da tradução
+    wasManuallyResized?: boolean; // true se usuário redimensionou manualmente
 }
 
 // Segmento de áudio gerado
@@ -20,17 +21,15 @@ export interface AudioSegment {
     audioBlob: Blob;
     duration: number;
     targetDuration: number; // duração esperada do slot
+    startTime: number; // segundos
     needsStretch: boolean; // se precisa de time-stretch
 }
 
 // Estágios do pipeline
 export type ProcessingStage =
-    | 'idle'
-    | 'transcription'
-    | 'translation'
-    | 'dubbing'
-    | 'assembly'
-    | 'completed';
+    | 'setup'
+    | 'processing'
+    | 'editor';
 
 // Opções de voz OpenAI
 export interface VoiceOption {

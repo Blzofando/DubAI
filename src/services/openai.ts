@@ -63,6 +63,7 @@ export async function processQueue(
             const audioSegment: AudioSegment = {
                 id: segment.id,
                 audioBlob,
+                startTime: segment.start,
                 duration,
                 targetDuration,
                 needsStretch: Math.abs(duration - targetDuration) > 0.2, // Mais de 200ms de diferença

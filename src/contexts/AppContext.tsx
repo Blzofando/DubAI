@@ -46,6 +46,9 @@ interface AppContextType {
 
     // Reset
     resetAll: () => void;
+    updateAudioSegmentTiming: (id: string, newStartTime: number) => void;
+    updateAudioSegmentBlob: (id: string, newBlob: Blob, newDuration: number) => void;
+    applySpeedAdjustment: (id: string, onProgress?: (msg: string) => void) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -63,7 +66,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const [hasApiKeys, setHasApiKeys] = useState(false);
 
     // Processing state
-    const [stage, setStage] = useState<ProcessingStage>('idle');
+    const [stage, setStage] = useState<ProcessingStage>('setup');
     const [progress, setProgress] = useState<ProgressUpdate | null>(null);
 
     // Theme state
@@ -140,7 +143,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Reset tudo
     const resetAll = () => {
-        setStage('idle');
+        setStage('setup');
         setProgress(null);
         setSourceFile(null);
         setSourceLanguage('');
@@ -148,6 +151,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setTranslatedSegments([]);
         setAudioSegments([]);
         setFinalAudioBlob(null);
+    };
+
+    const updateAudioSegmentTiming = (id: string, newStartTime: number) => {
+        setAudioSegments(prev => prev.map(seg =>
+            seg.id === id ? { ...seg, startTime: newStartTime } : seg
+        ));
+    };
+
+    const updateAudioSegmentBlob = (id: string, newBlob: Blob, newDuration: number) => {
+        setAudioSegments(prev => prev.map(seg =>
+            seg.id === id ? { ...seg, audioBlob: newBlob, duration: newDuration, needsStretch: false } : seg
+        ));
+    };
+
+    const applySpeedAdjustment = async (id: string, onProgress?: (msg: string) => void) => {
+        try {
+            // Find segment in audioSegments
+            const segment = audioSegments.find(seg => seg.id === id);
+            if (!segment) {
+                throw new Error('Segment not found');
+            }
+
+            // Find corresponding translated segment for target duration
+            const translatedSeg = translatedSegments.find(seg => seg.id === id);
+            if (!translatedSeg) {
+                throw new Error('Translated segment not found');
+            }
+
+            const targetDuration = translatedSeg.end - translatedSeg.start;
+            const currentDuration = segment.duration;
+            const speedFactor = currentDuration / targetDuration;
+
+            onProgress?.(`Ajustando velocidade (${speedFactor.toFixed(2)}x)...`);
+
+            // Import FFmpeg function dynamically
+            const { adjustAudioSpeed, loadFFmpeg } = await import('@/services/ffmpeg');
+
+            // Ensure FFmpeg is loaded
+            await loadFFmpeg();
+
+            // Apply tempo adjustment
+            const adjustedBlob = await adjustAudioSpeed(segment.audioBlob, speedFactor, onProgress);
+
+            // Update the segment with new blob and duration
+            updateAudioSegmentBlob(id, adjustedBlob, targetDuration);
+
+            // Also update translatedSegments to reflect the change
+            setTranslatedSegments(prev => prev.map(seg =>
+                seg.id === id ? { ...seg, end: seg.start + targetDuration } : seg
+            ));
+
+            onProgress?.('✅ Velocidade ajustada com sucesso!');
+        } catch (error: any) {
+            console.error('Error applying speed adjustment:', error);
+            throw new Error(`Falha ao ajustar velocidade: ${error.message}`);
+        }
     };
 
     const value: AppContextType = {
@@ -175,6 +234,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         theme,
         toggleTheme,
         resetAll,
+        updateAudioSegmentTiming,
+        updateAudioSegmentBlob,
+        applySpeedAdjustment,
     };
 
     return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

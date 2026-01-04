@@ -53,7 +53,7 @@ export default function FileUpload() {
         setSourceFile(null);
     };
 
-    const isDisabled = stage !== 'idle';
+    const isDisabled = stage !== 'setup';
 
     if (sourceFile) {
         const isVideo = sourceFile.type.includes('video') || sourceFile.name.endsWith('.mp4');

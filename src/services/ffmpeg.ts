@@ -2,213 +2,217 @@ import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
 let ffmpegInstance: FFmpeg | null = null;
+let ffmpegLoaded = false;
 
 /**
- * Inicializa o FFmpeg.wasm
+ * Carrega FFmpeg WebAssembly
  */
-export async function loadFFmpeg(onProgress?: (progress: number) => void): Promise<FFmpeg> {
-    if (ffmpegInstance && ffmpegInstance.loaded) {
-        return ffmpegInstance;
-    }
+export async function loadFFmpeg(): Promise<void> {
+    if (ffmpegLoaded) return;
 
-    const ffmpeg = new FFmpeg();
-
-    ffmpeg.on('log', ({ message }) => {
-        console.log('[FFmpeg]', message);
-    });
-
-    if (onProgress) {
-        ffmpeg.on('progress', ({ progress }) => {
-            onProgress(Math.round(progress * 100));
-        });
-    }
+    ffmpegInstance = new FFmpeg();
 
     const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-    await ffmpeg.load({
+
+    await ffmpegInstance.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
     });
 
-    ffmpegInstance = ffmpeg;
-    return ffmpeg;
+    ffmpegLoaded = true;
 }
 
 /**
- * Extrai áudio de MP4 ou MP3
+ * Extrai áudio de um vídeo
  */
-export async function extractAudio(file: File): Promise<Blob> {
-    const ffmpeg = await loadFFmpeg();
+export async function extractAudio(videoFile: File): Promise<Blob> {
+    if (!ffmpegInstance) throw new Error('FFmpeg não carregado');
 
-    const inputName = 'input' + (file.name.endsWith('.mp4') ? '.mp4' : '.mp3');
-    const outputName = 'output.mp3';
+    await ffmpegInstance.writeFile('input.mp4', await fetchFile(videoFile));
 
-    // Escrever arquivo no sistema virtual do FFmpeg
-    await ffmpeg.writeFile(inputName, await fetchFile(file));
-
-    // Extrair áudio (converter para mp3 se necessário)
-    await ffmpeg.exec(['-i', inputName, '-vn', '-ar', '44100', '-ac', '2', '-b:a', '192k', outputName]);
-
-    // Ler resultado
-    const data = await ffmpeg.readFile(outputName);
-    const blob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'audio/mpeg' });
-
-    // Limpar
-    await ffmpeg.deleteFile(inputName);
-    await ffmpeg.deleteFile(outputName);
-
-    return blob;
-}
-
-/**
- * Remove silêncio do INÍCIO e FINAL do áudio (preserva pausas internas)
- */
-/**
- * Remove silêncio do INÍCIO e FINAL do áudio (preserva pausas internas)
- */
-export async function removeStartEndSilence(audioBlob: Blob): Promise<Blob> {
-    const ffmpeg = await loadFFmpeg();
-
-    const inputName = 'silence_input.mp3';
-    const outputName = 'silence_output.mp3';
-
-    await ffmpeg.writeFile(inputName, await fetchFile(audioBlob));
-
-    // Filtro para remover silêncio no início e fim, mas preservar no meio
-    // Ajustado para ser menos agressivo (threshold -60dB e duração minima 0.2s)
-    await ffmpeg.exec([
-        '-i', inputName,
-        '-af', 'silenceremove=start_periods=1:start_silence=0.2:start_threshold=-60dB:stop_periods=1:stop_silence=0.2:stop_threshold=-60dB',
+    await ffmpegInstance.exec([
+        '-i', 'input.mp4',
+        '-vn', // Sem vídeo
+        '-acodec', 'libmp3lame',
         '-ar', '44100',
-        '-ac', '2', // Forçar stereo
-        outputName
+        '-ac', '2',
+        '-b:a', '192k',
+        'output.mp3'
     ]);
 
-    const data = await ffmpeg.readFile(outputName);
-    const blob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'audio/mpeg' });
-
-    await ffmpeg.deleteFile(inputName);
-    await ffmpeg.deleteFile(outputName);
-
-    return blob;
+    const data = await ffmpegInstance.readFile('output.mp3') as Uint8Array;
+    return new Blob([data as BlobPart], { type: 'audio/mpeg' });
 }
 
 /**
- * Ajusta velocidade do áudio SEM alterar pitch (time-stretch)
- * speedFactor > 1 = mais rápido, < 1 = mais lento
+ * Ajusta velocidade do áudio usando atempo filter
+ * Suporta qualquer fator de velocidade, encadeando filtros quando necessário
+ */
+export async function adjustAudioSpeed(
+    audioBlob: Blob,
+    speedFactor: number,
+    onProgress?: (message: string) => void
+): Promise<Blob> {
+    if (!ffmpegInstance) throw new Error('FFmpeg não carregado');
+    if (speedFactor <= 0) throw new Error('Speed factor deve ser > 0');
+
+    onProgress?.(`Ajustando velocidade (${speedFactor.toFixed(2)}x)...`);
+
+    // atempo filter tem limite de 0.5x - 2.0x
+    // Para valores fora desse range, encadeamos múltiplos filtros
+    let filters: string[] = [];
+    let remainingSpeed = speedFactor;
+
+    while (remainingSpeed > 2.0) {
+        filters.push('atempo=2.0');
+        remainingSpeed /= 2.0;
+    }
+
+    while (remainingSpeed < 0.5) {
+        filters.push('atempo=0.5');
+        remainingSpeed /= 0.5;
+    }
+
+    // Adiciona o fator final
+    if (remainingSpeed !== 1.0) {
+        filters.push(`atempo=${remainingSpeed.toFixed(4)}`);
+    }
+
+    const filterChain = filters.join(',');
+
+    try {
+        await ffmpegInstance.writeFile('input_audio.mp3', await fetchFile(audioBlob));
+
+        await ffmpegInstance.exec([
+            '-i', 'input_audio.mp3',
+            '-filter:a', filterChain,
+            '-ar', '44100',
+            '-ac', '2',
+            'output_adjusted.mp3'
+        ]);
+
+        const data = await ffmpegInstance.readFile('output_adjusted.mp3') as Uint8Array;
+        onProgress?.('✅ Velocidade ajustada!');
+
+        return new Blob([data as BlobPart], { type: 'audio/mpeg' });
+    } catch (error) {
+        console.error('Erro ao ajustar velocidade:', error);
+        throw new Error('Falha ao ajustar velocidade do áudio');
+    }
+}
+
+/**
+ * Ajusta velocidade do áudio (legado, mantido para compatibilidade)
+ * @deprecated Use adjustAudioSpeed para maior precisão
  */
 export async function adjustSpeed(audioBlob: Blob, speedFactor: number): Promise<Blob> {
-    const ffmpeg = await loadFFmpeg();
-
-    const inputName = 'speed_input.mp3';
-    const outputName = 'speed_output.mp3';
-
-    await ffmpeg.writeFile(inputName, await fetchFile(audioBlob));
-
-    // atempo: ajusta tempo sem alterar pitch
-    // atempo aceita valores entre 0.5 e 100, mas vamos limitar entre 0.5 e 2.0
-    const clampedSpeed = Math.max(0.5, Math.min(2.0, speedFactor));
-
-    await ffmpeg.exec([
-        '-i', inputName,
-        '-filter:a', `atempo=${clampedSpeed}`,
-        '-ar', '44100',
-        '-ac', '2', // Forçar stereo
-        outputName
-    ]);
-
-    const data = await ffmpeg.readFile(outputName);
-    const blob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'audio/mpeg' });
-
-    await ffmpeg.deleteFile(inputName);
-    await ffmpeg.deleteFile(outputName);
-
-    return blob;
+    return adjustAudioSpeed(audioBlob, speedFactor);
 }
 
 /**
- * Monta o áudio final usando MIXAGEM com ADELAY
- * Abordagem robusta: Posiciona cada segmento em seu timestamp exato
+ * Monta SOMENTE os segmentos dublados sem o áudio original
+ * Ideal para exportação final
  */
-export async function assembleAudio(
-    segments: Array<{ audioBlob: Blob; startTime: number; duration: number }>,
+export async function assembleDubbingOnly(
+    dubbedSegments: Array<{ blob: Blob; start: number }>,
     totalDuration: number
 ): Promise<Blob> {
-    const ffmpeg = await loadFFmpeg();
+    if (!ffmpegInstance) throw new Error('FFmpeg não carregado');
+    if (dubbedSegments.length === 0) throw new Error('Nenhum segmento para montar');
 
-    if (segments.length === 0) {
-        throw new Error('Nenhum segmento de áudio fornecido');
+    // Escrever cada segmento dublado
+    for (let i = 0; i < dubbedSegments.length; i++) {
+        await ffmpegInstance.writeFile(`dub_${i}.mp3`, await fetchFile(dubbedSegments[i].blob));
     }
 
-    console.log(`[FFmpeg] Iniciando montagem via FILTER_COMPLEX (Total: ${totalDuration.toFixed(2)}s)`);
+    // Construir filtro de delay para cada segmento
+    let filterComplex = '';
+    for (let i = 0; i < dubbedSegments.length; i++) {
+        const delayMs = Math.round(dubbedSegments[i].start * 1000); // ms
+        filterComplex += `[${i}:a]adelay=${delayMs}|${delayMs}[dub${i}];`;
+    }
 
-    // Ordenar por startTime apenas para organização, não é estritamente necessário para o mix
-    segments.sort((a, b) => a.startTime - b.startTime);
-
-    // Limite de segmentos para processar de uma vez (evitar erro de linha de comando muito longa)
-    // Se houver muitos segmentos, seria ideal processar em batches, mas vamos tentar tudo de uma vez por enquanto
-    // ou limitar a command line. O FFmpeg WASM roda em memória, então o limite é a RAM/Buffer.
+    // Mixar todos os segmentos
+    const inputs = dubbedSegments.map((_, i) => `[dub${i}]`);
+    filterComplex += `${inputs.join('')}amix=inputs=${dubbedSegments.length}:duration=longest[out]`;
 
     const inputArgs: string[] = [];
-    const filterParts: string[] = [];
-    let inputStreamName = '';
-
-    for (let i = 0; i < segments.length; i++) {
-        const seg = segments[i];
-        const segName = `seg_${i}.mp3`;
-
-        // Escrever arquivo
-        await ffmpeg.writeFile(segName, await fetchFile(seg.audioBlob));
-
-        // Adicionar input
-        inputArgs.push('-i', segName);
-
-        // Delay em milissegundos
-        const delayMs = Math.round(seg.startTime * 1000);
-
-        // Criar filtro adelay para este input
-        // Sintaxe: [i:a]adelay=delay|delay[标签]
-        filterParts.push(`[${i}:a]adelay=${delayMs}|${delayMs}[s${i}]`);
+    for (let i = 0; i < dubbedSegments.length; i++) {
+        inputArgs.push('-i', `dub_${i}.mp3`);
     }
 
-    // Parte final do filtro: mixar todos
-    const accumulatedInputs = segments.map((_, i) => `[s${i}]`).join('');
-    // mixar N inputs, normalize=0 mantem volume (dropout_transition=0 evita fade)
-    filterParts.push(`${accumulatedInputs}amix=inputs=${segments.length}:dropout_transition=0:normalize=0[out]`);
-
-    const filterComplex = filterParts.join(';');
-
-    // Executar
-    await ffmpeg.exec([
+    await ffmpegInstance.exec([
         ...inputArgs,
         '-filter_complex', filterComplex,
         '-map', '[out]',
         '-ar', '44100',
         '-ac', '2',
-        'final_output.mp3'
+        '-b:a', '192k',
+        '-t', totalDuration.toString(),
+        'final_dubbing.mp3'
     ]);
 
-    // Ler resultado
-    const data = await ffmpeg.readFile('final_output.mp3');
-    const blob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'audio/mpeg' });
+    const data = await ffmpegInstance.readFile('final_dubbing.mp3') as Uint8Array;
+    return new Blob([data as BlobPart], { type: 'audio/mpeg' });
+}
 
-    // Limpeza
-    await ffmpeg.deleteFile('final_output.mp3');
-    for (let i = 0; i < segments.length; i++) {
-        await ffmpeg.deleteFile(`seg_${i}.mp3`);
+/**
+ * Monta o áudio final misturando original + segmentos dublados
+ * USE assembleDubbingOnly() se quiser apenas a dublagem
+ */
+export async function assembleAudio(
+    originalAudio: Blob,
+    dubbedSegments: Array<{ blob: Blob; start: number }>,
+    totalDuration: number
+): Promise<Blob> {
+    if (!ffmpegInstance) throw new Error('FFmpeg não carregado');
+
+    // Escrever áudio original
+    await ffmpegInstance.writeFile('original.mp3', await fetchFile(originalAudio));
+
+    // Escrever cada segmento dublado
+    for (let i = 0; i < dubbedSegments.length; i++) {
+        await ffmpegInstance.writeFile(`dub_${i}.mp3`, await fetchFile(dubbedSegments[i].blob));
     }
 
-    return blob;
+    // Construir filtro de mixagem complexo
+    let filterComplex = `[0:a]volume=0.3[orig];`; // Original em 30%
+
+    for (let i = 0; i < dubbedSegments.length; i++) {
+        const delay = Math.round(dubbedSegments[i].start * 1000); // ms
+        filterComplex += `[${i + 1}:a]adelay=${delay}|${delay}[dub${i}];`;
+    }
+
+    // Mixar tudo
+    const inputs = ['[orig]', ...dubbedSegments.map((_, i) => `[dub${i}]`)];
+    filterComplex += `${inputs.join('')}amix=inputs=${dubbedSegments.length + 1}:duration=longest[out]`;
+
+    const inputArgs: string[] = ['-i', 'original.mp3'];
+    for (let i = 0; i < dubbedSegments.length; i++) {
+        inputArgs.push('-i', `dub_${i}.mp3`);
+    }
+
+    await ffmpegInstance.exec([
+        ...inputArgs,
+        '-filter_complex', filterComplex,
+        '-map', '[out]',
+        '-ar', '44100',
+        '-ac', '2',
+        '-b:a', '192k',
+        'final.mp3'
+    ]);
+
+    const data = await ffmpegInstance.readFile('final.mp3') as Uint8Array;
+    return new Blob([data as BlobPart], { type: 'audio/mpeg' });
 }
 
 /**
  * Calcula duração de um áudio
  */
-export async function getAudioDuration(audioBlob: Blob): Promise<number> {
+export function getAudioDuration(audioBlob: Blob): Promise<number> {
     return new Promise((resolve, reject) => {
         const audio = new Audio();
-        audio.onloadedmetadata = () => {
-            resolve(audio.duration);
-        };
+        audio.onloadedmetadata = () => resolve(audio.duration);
         audio.onerror = reject;
         audio.src = URL.createObjectURL(audioBlob);
     });

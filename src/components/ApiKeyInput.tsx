@@ -17,7 +17,7 @@ export default function ApiKeyInput() {
         setTimeout(() => setJustSaved(false), 2000);
     };
 
-    const isValid = geminiKey.length > 0 && openaiKey.length > 0;
+    const isValid = geminiKey.length > 0 && openaiKey.startsWith('sk-');
 
     return (
         <div className="bg-gradient-to-br from-primary-50 to-accent-50 dark:from-gray-900 dark:to-slate-900 border-2 border-primary-200 dark:border-gray-700 rounded-2xl p-6 shadow-lg transition-colors duration-300">

@@ -8,7 +8,7 @@ import { Volume2 } from 'lucide-react';
 export default function VoiceSelector() {
     const { selectedVoice, setSelectedVoice, stage } = useApp();
 
-    const isDisabled = stage !== 'idle' && stage !== 'translation';
+    const isDisabled = stage !== 'setup';
 
     return (
         <div className="bg-white dark:bg-gray-900 border-2 border-accent-200 dark:border-gray-700 rounded-2xl p-6 shadow-lg transition-colors duration-300">

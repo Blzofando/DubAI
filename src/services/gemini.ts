@@ -89,12 +89,32 @@ EXEMPLO:
             })
             .sort((a, b) => a.start - b.start); // Garantir ordem cronológica
 
+        // CORREÇÃO DE SOBREPOSIÇÃO (Post-processing)
+        // Se um segmento começar antes do anterior terminar, ajustamos o 'end' do anterior.
+        for (let i = 0; i < validSegments.length - 1; i++) {
+            const current = validSegments[i];
+            const next = validSegments[i + 1];
+
+            if (current.end > next.start) {
+                console.warn(`Ajustando sobreposição: Segmento ${current.id} (termina ${current.end}) sobrepõe ${next.id} (começa ${next.start})`);
+                current.end = next.start; // Limita o fim do atual ao início do próximo
+
+                // Se isso deixaria o segmento muito curto, talvez devêssemos fundir ou ajustar o próximo?
+                // Para V1, apenas clamp é seguro para evitar visual "amontoado".
+                if (current.end - current.start < 0.1) {
+                    // Caso extremo: segmento ficou minúsculo. 
+                    // Vamos apenas aceitar o ajuste ou mover o próximo pra frente?
+                    // Mover o próximo pra frente é perigoso (desincroniza audio real).
+                    // Melhor encurtar o atual.
+                }
+            }
+        }
+
         if (validSegments.length === 0) {
             throw new Error('Nenhum segmento válido encontrado após validação');
         }
 
         return validSegments;
-
         return segments;
     } catch (parseError: any) {
         console.error('Erro ao fazer parse do JSON:', parseError.message);
