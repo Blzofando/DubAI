@@ -24,6 +24,7 @@ export interface AudioSegment {
     targetDuration: number; // duração esperada do slot
     startTime: number; // segundos
     needsStretch: boolean; // se precisa de time-stretch
+    appliedSpeedFactor?: number; // fator de velocidade aplicado pelo FFmpeg
 }
 
 // Estágios do pipeline

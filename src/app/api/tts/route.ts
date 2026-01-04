@@ -12,10 +12,11 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Text is required' }, { status: 400 });
         }
 
+        // Less aggressive sanitization - preserve more characters for better TTS
+        // Only remove control characters and problematic symbols
         const safeText = text
-            .replace(/[\r\n\t]+/g, ' ')
-            // eslint-disable-next-line no-control-regex
-            .replace(/[^\x00-\x7F\u00C0-\u00FF\u0100-\u017F\.,!\?;:()\- ]/g, '')
+            .replace(/[\r\n\t]+/g, ' ') // Remove newlines/tabs
+            .replace(/['"]/g, '"')      // Normalize quotes
             .trim();
 
         if (!safeText) {

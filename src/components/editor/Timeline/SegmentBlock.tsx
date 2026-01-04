@@ -54,7 +54,7 @@ export default function SegmentBlock({ id, text, start, duration, zoom, onDragSt
 
                 {/* Speed Badge */}
                 <span className={`text-[9px] px-1 rounded font-mono ${speed !== 1 ? 'bg-yellow-400 text-black font-bold' : 'bg-black/30'}`}>
-                    {speed.toFixed(1)}x
+                    {speed.toFixed(2)}x
                 </span>
 
                 {/* Fit Audio Button - Shows when speed != 1.0 AND was manually resized */}

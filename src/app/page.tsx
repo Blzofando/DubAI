@@ -17,7 +17,7 @@ import { translateIsochronic, transcribeAudio } from '@/services/gemini';
 import { transcribeWithWhisper } from '@/services/whisper';
 import { translateWithOpenAI } from '@/services/openaiTranslation';
 import { generateSpeech } from '@/services/tts';
-import { extractAudio, assembleAudio, loadFFmpeg } from '@/services/ffmpeg';
+import { extractAudio, assembleAudio, loadFFmpeg, adjustAudioSpeed, removeSilence } from '@/services/ffmpeg';
 import { createProject, updateProject, uploadFile } from '@/services/projectService';
 
 import type { Project } from '@/types/project';
@@ -113,22 +113,61 @@ export default function HomePage() {
                     message: `Gerando TTS ${i + 1}/${translated.length}...`
                 });
 
-                const audioBlob = await generateSpeech(
+                let audioBlob = await generateSpeech(
                     seg.translatedText,
                     selectedVoice
                 );
 
+                // Remove silence from beginning and end
+                audioBlob = await removeSilence(audioBlob);
+
+                // Calculate actual audio duration (after silence removal)
+                const actualDuration = await new Promise<number>((resolve, reject) => {
+                    const audio = new Audio();
+                    audio.onloadedmetadata = () => resolve(audio.duration);
+                    audio.onerror = reject;
+                    audio.src = URL.createObjectURL(audioBlob);
+                });
+
+                const targetDuration = seg.end - seg.start;
+                const needsAdjustment = Math.abs(actualDuration - targetDuration) > 0.2;
+
                 processedSegments.push({
                     id: seg.id,
                     audioBlob,
-                    duration: audioBlob.size / 24000,
-                    targetDuration: seg.end - seg.start,
+                    duration: actualDuration,
+                    targetDuration,
                     startTime: seg.start,
-                    needsStretch: false
+                    needsStretch: needsAdjustment
                 });
             }
 
             setAudioSegments(processedSegments);
+
+            // Auto-apply speed adjustment for segments that need it
+            setProgress({ stage: 'processing', progress: 90, message: 'Ajustando velocidades...' });
+
+            for (let i = 0; i < processedSegments.length; i++) {
+                const seg = processedSegments[i];
+                if (seg.needsStretch) {
+                    setProgress({
+                        stage: 'processing',
+                        progress: 90 + (i / processedSegments.length) * 5,
+                        message: `Ajustando ${i + 1}/${processedSegments.length}...`
+                    });
+
+                    const speedFactor = seg.duration / seg.targetDuration;
+                    const adjustedBlob = await adjustAudioSpeed(seg.audioBlob, speedFactor);
+
+                    // Update segment with adjusted audio and save the applied speed factor
+                    seg.audioBlob = adjustedBlob;
+                    seg.duration = seg.targetDuration;
+                    seg.needsStretch = false;
+                    seg.appliedSpeedFactor = speedFactor; // Save the speed that was applied
+                }
+            }
+
+            setAudioSegments([...processedSegments]); // Force state update
 
             // --- 5. INITIAL ASSEMBLY (Preview) ---
             setProgress({ stage: 'processing', progress: 95, message: 'Montando preview inicial...' });

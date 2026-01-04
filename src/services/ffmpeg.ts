@@ -102,6 +102,46 @@ export async function adjustAudioSpeed(
 }
 
 /**
+ * Remove silêncio do início e fim do áudio
+ * Útil para TTS que adiciona pausas indesejadas
+ */
+export async function removeSilence(
+    audioBlob: Blob,
+    onProgress?: (message: string) => void
+): Promise<Blob> {
+    if (!ffmpegInstance) throw new Error('FFmpeg não carregado');
+
+    onProgress?.('Removendo silêncio...');
+
+    try {
+        await ffmpegInstance.writeFile('input_silence.mp3', await fetchFile(audioBlob));
+
+        // silenceremove filter:
+        // start_periods=1: remove silence from start
+        // start_duration=0: minimum non-silence duration to keep
+        // start_threshold=-50dB: audio below -50dB is silence
+        // stop_periods=-1: process entire file for end silence
+        // stop_duration=0.3: silence must be >0.3s to be removed
+        // stop_threshold=-50dB: same threshold for end
+        await ffmpegInstance.exec([
+            '-i', 'input_silence.mp3',
+            '-af', 'silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:stop_periods=-1:stop_duration=0.3:stop_threshold=-50dB',
+            '-ar', '44100',
+            '-ac', '2',
+            'output_trimmed.mp3'
+        ]);
+
+        const data = await ffmpegInstance.readFile('output_trimmed.mp3') as Uint8Array;
+        onProgress?.('✅ Silêncio removido!');
+
+        return new Blob([data as BlobPart], { type: 'audio/mpeg' });
+    } catch (error) {
+        console.error('Erro ao remover silêncio:', error);
+        throw new Error('Falha ao remover silêncio do áudio');
+    }
+}
+
+/**
  * Ajusta velocidade do áudio (legado, mantido para compatibilidade)
  * @deprecated Use adjustAudioSpeed para maior precisão
  */

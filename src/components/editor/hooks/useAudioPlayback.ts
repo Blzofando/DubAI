@@ -121,8 +121,9 @@ export function useAudioPlayback(selectedSegmentId: string | null = null) {
                     durationToPlay = seg.duration - offsetInBlob;
                 }
 
-                // Construct duration to play logic (don't play past end)
-                // Actually durationToPlay is handled by start() 3rd arg.
+                // Construct duration to play logic
+                // Note: We don't pass duration to start() as it cuts audio incorrectly
+                // The audio will play naturally until segment ends or is stopped
 
                 try {
                     const arrayBuffer = await seg.audioBlob.arrayBuffer();
@@ -133,10 +134,8 @@ export function useAudioPlayback(selectedSegmentId: string | null = null) {
                     source.connect(mainGain);
 
                     const absStartTime = ctx.currentTime + whenToPlay;
-                    source.start(absStartTime, offsetInBlob, durationToPlay);
-
-                    // Stop at end of solo segment if needed? 
-                    // source.start() 3rd arg handles duration, so it stops automatically.
+                    // Play from offsetInBlob, but let it play naturally (don't cut duration)
+                    source.start(absStartTime, offsetInBlob);
 
                     scheduledNodesRef.current.push(source);
                 } catch (e) {

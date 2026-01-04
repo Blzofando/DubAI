@@ -308,13 +308,13 @@ export default function TimelineContainer({
                                     const currentDuration = currentEnd - currentStart;
 
                                     // Calculate Speed
-                                    // Speed = AudioDuration / BlockDuration
-                                    // We need original audio duration... stored in seg? No.
-                                    // Stored in audioSegments context.
+                                    // Use appliedSpeedFactor if available (from FFmpeg adjustment)
+                                    // Otherwise calculate dynamically: AudioDuration / BlockDuration
                                     const audioSeg = useApp().audioSegments.find(s => s.id === seg.id);
                                     let speed = 1.0;
-                                    if (audioSeg && currentDuration > 0) {
-                                        speed = audioSeg.duration / currentDuration;
+                                    if (audioSeg) {
+                                        // Prefer the saved applied speed factor
+                                        speed = audioSeg.appliedSpeedFactor || (currentDuration > 0 ? audioSeg.duration / currentDuration : 1.0);
                                     }
 
                                     return (

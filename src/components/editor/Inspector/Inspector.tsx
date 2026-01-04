@@ -153,9 +153,20 @@ export default function Inspector({
                     <div className="space-y-2">
                         <div className="flex items-center justify-between text-xs text-gray-500">
                             <span>Áudio Atual: {audioSeg.duration.toFixed(2)}s</span>
-                            {audioSeg.duration > (segment.end - segment.start) + 0.5 && (
-                                <span className="text-amber-500 font-bold">⚠️ Maior que o slot</span>
-                            )}
+                            {(() => {
+                                const targetDuration = segment.end - segment.start;
+                                const speedFactor = audioSeg.duration / targetDuration;
+                                const needsAdjustment = Math.abs(speedFactor - 1.0) > 0.05;
+
+                                if (needsAdjustment) {
+                                    return (
+                                        <span className={`font-bold ${speedFactor > 1.2 ? 'text-amber-500' : 'text-blue-500'}`}>
+                                            Velocidade: {speedFactor.toFixed(2)}x
+                                        </span>
+                                    );
+                                }
+                                return <span className="text-green-500 font-bold">✓ {speedFactor.toFixed(2)}x</span>;
+                            })()}
                         </div>
                         {isInSpeedQueue && !isInTtsQueue && (
                             <div className="text-xs text-blue-500 font-bold flex items-center gap-1">
