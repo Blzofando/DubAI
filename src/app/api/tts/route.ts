@@ -46,9 +46,3 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
     }
 }
-
-    } catch (error: any) {
-    console.error('TTS Error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
-}
-}
