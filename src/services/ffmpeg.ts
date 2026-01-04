@@ -79,23 +79,40 @@ export async function adjustAudioSpeed(
     }
 
     const filterChain = filters.join(',');
+    const inputFile = 'input_audio.mp3';
+    const outputFile = 'output_adjusted.mp3';
 
     try {
-        await ffmpegInstance.writeFile('input_audio.mp3', await fetchFile(audioBlob));
+        await ffmpegInstance.writeFile(inputFile, await fetchFile(audioBlob));
 
         await ffmpegInstance.exec([
-            '-i', 'input_audio.mp3',
+            '-i', inputFile,
             '-filter:a', filterChain,
             '-ar', '44100',
             '-ac', '2',
-            'output_adjusted.mp3'
+            outputFile
         ]);
 
-        const data = await ffmpegInstance.readFile('output_adjusted.mp3') as Uint8Array;
-        onProgress?.('✅ Velocidade ajustada!');
+        const data = await ffmpegInstance.readFile(outputFile) as Uint8Array;
 
+        // CRITICAL: Clean up temp files to prevent memory overflow
+        try {
+            await ffmpegInstance.deleteFile(inputFile);
+            await ffmpegInstance.deleteFile(outputFile);
+        } catch (e) {
+            console.warn('Failed to cleanup temp files:', e);
+        }
+
+        onProgress?.('✅ Velocidade ajustada!');
         return new Blob([data as BlobPart], { type: 'audio/mpeg' });
     } catch (error) {
+        // Cleanup on error too
+        try {
+            await ffmpegInstance.deleteFile(inputFile).catch(() => { });
+            await ffmpegInstance.deleteFile(outputFile).catch(() => { });
+        } catch (e) {
+            // Ignore cleanup errors
+        }
         console.error('Erro ao ajustar velocidade:', error);
         throw new Error('Falha ao ajustar velocidade do áudio');
     }
@@ -113,29 +130,41 @@ export async function removeSilence(
 
     onProgress?.('Removendo silêncio...');
 
-    try {
-        await ffmpegInstance.writeFile('input_silence.mp3', await fetchFile(audioBlob));
+    const inputFile = 'input_silence.mp3';
+    const outputFile = 'output_trimmed.mp3';
 
-        // silenceremove filter:
-        // start_periods=1: remove silence from start
-        // start_duration=0: minimum non-silence duration to keep
-        // start_threshold=-50dB: audio below -50dB is silence
-        // stop_periods=-1: process entire file for end silence
-        // stop_duration=0.3: silence must be >0.3s to be removed
-        // stop_threshold=-50dB: same threshold for end
+    try {
+        await ffmpegInstance.writeFile(inputFile, await fetchFile(audioBlob));
+
+        // silenceremove filter with conservative thresholds
         await ffmpegInstance.exec([
-            '-i', 'input_silence.mp3',
+            '-i', inputFile,
             '-af', 'silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:stop_periods=-1:stop_duration=0.3:stop_threshold=-50dB',
             '-ar', '44100',
             '-ac', '2',
-            'output_trimmed.mp3'
+            outputFile
         ]);
 
-        const data = await ffmpegInstance.readFile('output_trimmed.mp3') as Uint8Array;
-        onProgress?.('✅ Silêncio removido!');
+        const data = await ffmpegInstance.readFile(outputFile) as Uint8Array;
 
+        // CRITICAL: Clean up temp files to prevent memory overflow
+        try {
+            await ffmpegInstance.deleteFile(inputFile);
+            await ffmpegInstance.deleteFile(outputFile);
+        } catch (e) {
+            console.warn('Failed to cleanup temp files:', e);
+        }
+
+        onProgress?.('✅ Silêncio removido!');
         return new Blob([data as BlobPart], { type: 'audio/mpeg' });
     } catch (error) {
+        // Cleanup on error too
+        try {
+            await ffmpegInstance.deleteFile(inputFile).catch(() => { });
+            await ffmpegInstance.deleteFile(outputFile).catch(() => { });
+        } catch (e) {
+            // Ignore cleanup errors
+        }
         console.error('Erro ao remover silêncio:', error);
         throw new Error('Falha ao remover silêncio do áudio');
     }
