@@ -21,6 +21,7 @@ import { extractAudio, assembleAudio, loadFFmpeg, adjustAudioSpeed, removeSilenc
 import { createProject, updateProject, uploadFile } from '@/services/projectService';
 
 import type { Project } from '@/types/project';
+import type { AudioSegment } from '@/types';
 
 export default function HomePage() {
     const { user, loading: authLoading } = useAuth();
@@ -103,7 +104,7 @@ export default function HomePage() {
 
             // --- 4. TTS (OPENAI) ---
             setProgress({ stage: 'processing', progress: 60, message: 'Gerando dublagem com Edge TTS...' });
-            const processedSegments = [];
+            const processedSegments: AudioSegment[] = [];
 
             for (let i = 0; i < translated.length; i++) {
                 const seg = translated[i];
