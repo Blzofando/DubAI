@@ -13,12 +13,28 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+let app;
+let auth: ReturnType<typeof getAuth>;
+let db: ReturnType<typeof getFirestore>;
 
-// Initialize services
-export const auth = getAuth(app);
-export const db = getFirestore(app);
-// Storage removed as per user request
-// export const storage = getStorage(app);
+if (typeof window !== 'undefined' || firebaseConfig.apiKey) {
+    try {
+        app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+        auth = getAuth(app);
+        db = getFirestore(app);
+    } catch (error) {
+        console.error('Firebase initialization error:', error);
+        // Fallback to prevent crash
+        app = {} as any;
+        auth = {} as any;
+        db = {} as any;
+    }
+} else {
+    // Build time or missing keys fallback
+    app = {} as any;
+    auth = {} as any;
+    db = {} as any;
+}
 
+export { auth, db };
 export default app;

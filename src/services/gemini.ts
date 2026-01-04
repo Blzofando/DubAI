@@ -173,17 +173,27 @@ export async function translateIsochronic(
 
     onProgress?.('Analisando contexto e contagem EXATA de caracteres...');
 
-    // PASSO 1: Contar caracteres EXATOS de cada segmento (não estimar por tempo)
+    // PASSO 1: Contar caracteres e permitir margem
     const segmentsData = segments.map(seg => {
         const duration = seg.end - seg.start;
-        const exactCharCount = seg.text.length; // ✅ CONTAGEM EXATA do original
+        const exactCharCount = seg.text.length;
+
+        // Detect CJK (Chinese, Japanese, Korean)
+        const isAsian = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(seg.text);
+
+        // Configuration:
+        // - Asian: Allow 3x-4x expansion because 1 char != 1 char in latin
+        // - Others: Strict limit as requested (voltar a restrição) -> 1.0x - 1.1x
+        const maxCharCount = isAsian
+            ? Math.floor(exactCharCount * 4) + 10
+            : Math.floor(exactCharCount * 1.1) + 2;
 
         return {
             id: seg.id,
             text: seg.text,
-            exactCharCount,          // Número REAL de caracteres
+            exactCharCount,
             duration: duration.toFixed(2),
-            maxCharCount: exactCharCount // Tradução não pode exceder isso
+            maxCharCount
         };
     });
 

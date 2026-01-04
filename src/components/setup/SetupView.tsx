@@ -3,6 +3,7 @@ import { useApp } from '@/contexts/AppContext';
 import ApiKeyInput from '@/components/ApiKeyInput';
 import FileUpload from '@/components/FileUpload';
 import VoiceSelector from '@/components/VoiceSelector';
+import ProviderSelector from '@/components/ProviderSelector';
 import { Play, Sparkles } from 'lucide-react';
 
 interface SetupViewProps {
@@ -22,6 +23,7 @@ export default function SetupView({ onStart, projectName, onProjectNameChange }:
                 {/* Left Column - Config */}
                 <div className="lg:col-span-1 space-y-6">
                     <ApiKeyInput />
+                    <ProviderSelector />
                     <VoiceSelector />
                 </div>
 

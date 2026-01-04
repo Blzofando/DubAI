@@ -7,6 +7,8 @@ import type {
     TranscriptSegment,
     TranslatedSegment,
     AudioSegment,
+    TranscriptionProvider,
+    TranslationProvider,
     ProgressUpdate
 } from '@/types';
 
@@ -15,6 +17,12 @@ interface AppContextType {
     apiKeys: ApiKeys;
     saveApiKeys: (keys: ApiKeys) => void;
     hasApiKeys: boolean;
+
+    // Providers
+    transcriptionProvider: TranscriptionProvider;
+    setTranscriptionProvider: (provider: TranscriptionProvider) => void;
+    translationProvider: TranslationProvider;
+    setTranslationProvider: (provider: TranslationProvider) => void;
 
     // Processing state
     stage: ProcessingStage;
@@ -58,6 +66,8 @@ const STORAGE_KEYS = {
     OPENAI_KEY: 'dubai_openai_key',
     SELECTED_VOICE: 'dubai_selected_voice',
     THEME: 'dubai_theme',
+    TRANSCRIPTION_PROVIDER: 'dubai_transcription_provider',
+    TRANSLATION_PROVIDER: 'dubai_translation_provider',
 };
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -81,14 +91,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const [finalAudioBlob, setFinalAudioBlob] = useState<Blob | null>(null);
 
     // Voice selection
-    const [selectedVoice, setSelectedVoice] = useState<string>('nova');
+    const [selectedVoice, setSelectedVoice] = useState<string>('pt-BR-AntonioNeural');
+
+    // Provider state
+    const [transcriptionProvider, setTranscriptionProvider] = useState<TranscriptionProvider>('whisper');
+    const [translationProvider, setTranslationProvider] = useState<TranslationProvider>('gemini');
 
     // Carregar dados e tema do localStorage ao montar
     useEffect(() => {
         if (typeof window !== 'undefined') {
             const geminiKey = localStorage.getItem(STORAGE_KEYS.GEMINI_KEY) || '';
             const openaiKey = localStorage.getItem(STORAGE_KEYS.OPENAI_KEY) || '';
-            const voice = localStorage.getItem(STORAGE_KEYS.SELECTED_VOICE) || 'nova';
+            const voice = localStorage.getItem(STORAGE_KEYS.SELECTED_VOICE) || 'pt-BR-AntonioNeural';
+            const savedTranscription = localStorage.getItem(STORAGE_KEYS.TRANSCRIPTION_PROVIDER) as TranscriptionProvider;
+            const savedTranslation = localStorage.getItem(STORAGE_KEYS.TRANSLATION_PROVIDER) as TranslationProvider;
 
             // Carregar tema (ou preferência do sistema)
             const savedTheme = localStorage.getItem(STORAGE_KEYS.THEME) as 'light' | 'dark' | null;
@@ -104,6 +120,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             }
 
             setSelectedVoice(voice);
+            if (savedTranscription) setTranscriptionProvider(savedTranscription);
+            if (savedTranslation) setTranslationProvider(savedTranslation);
         }
     }, []);
 
@@ -140,6 +158,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
             localStorage.setItem(STORAGE_KEYS.SELECTED_VOICE, selectedVoice);
         }
     }, [selectedVoice]);
+
+    // Salvar provedores
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            localStorage.setItem(STORAGE_KEYS.TRANSCRIPTION_PROVIDER, transcriptionProvider);
+            localStorage.setItem(STORAGE_KEYS.TRANSLATION_PROVIDER, translationProvider);
+        }
+    }, [transcriptionProvider, translationProvider]);
 
     // Reset tudo
     const resetAll = () => {
@@ -213,6 +239,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         apiKeys,
         saveApiKeys,
         hasApiKeys,
+        transcriptionProvider,
+        setTranscriptionProvider,
+        translationProvider,
+        setTranslationProvider,
         stage,
         setStage,
         progress,

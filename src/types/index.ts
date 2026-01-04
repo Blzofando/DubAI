@@ -40,13 +40,11 @@ export interface VoiceOption {
 }
 
 export const VOICE_OPTIONS: VoiceOption[] = [
-    { id: 'alloy', name: 'Alloy', description: 'Voz neutra e versátil' },
-    { id: 'echo', name: 'Echo', description: 'Voz masculina clara' },
-    { id: 'fable', name: 'Fable', description: 'Voz narrativa britânica' },
-    { id: 'onyx', name: 'Onyx', description: 'Voz masculina profunda' },
-    { id: 'nova', name: 'Nova', description: 'Voz feminina natural' },
-    { id: 'shimmer', name: 'Shimmer', description: 'Voz feminina suave' },
-    { id: 'coral', name: 'Coral', description: 'Voz feminina calorosa' },
+    { id: 'pt-BR-AntonioNeural', name: 'Antônio', description: 'Voz masculina natural (pt-BR)' },
+    { id: 'pt-BR-FranciscaNeural', name: 'Francisca', description: 'Voz feminina natural (pt-BR)' },
+    { id: 'pt-BR-ThalitaNeural', name: 'Thalita', description: 'Voz feminina jovem (pt-BR)' },
+    { id: 'en-US-AndrewNeural', name: 'Andrew', description: 'Voz masculina internacional (en-US)' },
+    { id: 'en-US-AvaNeural', name: 'Ava', description: 'Voz feminina internacional (en-US)' },
 ];
 
 // Estrutura de API Keys
@@ -61,3 +59,8 @@ export interface ProgressUpdate {
     progress: number; // 0-100
     message: string;
 }
+
+// Configurable Providers
+export type TranscriptionProvider = 'whisper' | 'gemini';
+export type TranslationProvider = 'gemini' | 'openai';
+

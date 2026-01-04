@@ -65,18 +65,39 @@ function combineSegmentsIntoSentences(segments: TranscriptSegment[]): Transcript
     const combined: TranscriptSegment[] = [];
     let currentGroup: TranscriptSegment[] = [];
 
+    // Configuration for splitting
+    const SOFT_LIMIT = 8; // Soft limit: try to split at commas after this time
+    const HARD_LIMIT = 20; // Hard limit: force split after this time no matter what
+    const PAUSE_THRESHOLD = 0.5; // Big pause -> split
+
+    // Punctuation regex
+    const END_SENTENCE = /[.!?。？！]$/;
+    const MID_SENTENCE = /[,;，；、]$/; // "Soft" break points
+
     segments.forEach((seg, index) => {
         currentGroup.push(seg);
 
         const text = seg.text.trim();
-        const hasEndPunctuation = /[.!?]$/.test(text);
+        const durationSoFar = seg.end - currentGroup[0].start;
 
-        // Check if next segment is far way (pause > 1s) - force break to keep sync
+        // 1. End of Sentence (Strongest signal)
+        const hasEndPunctuation = END_SENTENCE.test(text);
+
+        // 2. Significant Pause
         const nextSeg = segments[index + 1];
-        const isBigPause = nextSeg && (nextSeg.start - seg.end > 1.5);
+        const isBigPause = nextSeg && (nextSeg.start - seg.end > PAUSE_THRESHOLD);
 
-        // Merge if we have punctuation OR a big pause OR it's the last segment
-        if (hasEndPunctuation || isBigPause || index === segments.length - 1) {
+        // 3. Size Limits
+        // - Hard Limit: Block is just getting way too huge -> Split emergency
+        const hitHardLimit = durationSoFar > HARD_LIMIT;
+
+        // - Soft Limit: Block is somewhat long AND we have a comma -> Good place to split
+        const hitSoftLimit = durationSoFar > SOFT_LIMIT && MID_SENTENCE.test(text);
+
+        // 4. Last Segment
+        const isLast = index === segments.length - 1;
+
+        if (hasEndPunctuation || isBigPause || hitHardLimit || hitSoftLimit || isLast) {
 
             // Create merged segment
             const mergedText = currentGroup.map(s => s.text.trim()).join(' ');

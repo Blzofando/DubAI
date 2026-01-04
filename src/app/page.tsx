@@ -13,9 +13,10 @@ import ProcessingView from '@/components/processing/ProcessingView';
 import EditorView from '@/components/editor/EditorView';
 
 // Services
-import { translateIsochronic } from '@/services/gemini';
+import { translateIsochronic, transcribeAudio } from '@/services/gemini';
 import { transcribeWithWhisper } from '@/services/whisper';
-import { generateSpeech } from '@/services/openai';
+import { translateWithOpenAI } from '@/services/openaiTranslation';
+import { generateSpeech } from '@/services/tts';
 import { extractAudio, assembleAudio, loadFFmpeg } from '@/services/ffmpeg';
 import { createProject, updateProject, uploadFile } from '@/services/projectService';
 
@@ -38,6 +39,8 @@ export default function HomePage() {
         selectedVoice,
         theme,
         toggleTheme,
+        transcriptionProvider,
+        translationProvider,
         setSourceFile,
     } = useApp();
 
@@ -58,27 +61,48 @@ export default function HomePage() {
             setProgress({ stage: 'processing', progress: 5, message: 'Extraindo áudio original...' });
             const audioBlob = await extractAudio(sourceFile);
 
-            // --- 2. TRANSCRIPTION (WHISPER) ---
-            setProgress({ stage: 'processing', progress: 15, message: 'Transcrevendo com Whisper (preciso)...' });
-            const transcript = await transcribeWithWhisper(
-                apiKeys.openai,
-                audioBlob,
-                (msg: string) => setProgress({ stage: 'processing', progress: 20, message: msg })
-            );
+            // --- 2. TRANSCRIPTION ---
+            setProgress({ stage: 'processing', progress: 15, message: `Transcrevendo com ${transcriptionProvider === 'whisper' ? 'Whisper' : 'Gemini'}...` });
+
+            let transcript;
+            if (transcriptionProvider === 'whisper') {
+                transcript = await transcribeWithWhisper(
+                    apiKeys.openai,
+                    audioBlob,
+                    (msg: string) => setProgress({ stage: 'processing', progress: 20, message: msg })
+                );
+            } else {
+                transcript = await transcribeAudio(
+                    apiKeys.gemini,
+                    audioBlob,
+                    (msg: string) => setProgress({ stage: 'processing', progress: 20, message: msg })
+                );
+            }
             setTranscriptSegments(transcript);
 
-            // --- 3. TRANSLATION (GEMINI) ---
-            setProgress({ stage: 'processing', progress: 40, message: 'Traduzindo com Gemini...' });
-            const translated = await translateIsochronic(
-                apiKeys.gemini,
-                transcript,
-                'pt-BR',
-                (msg: string) => setProgress({ stage: 'processing', progress: 45, message: msg })
-            );
+            // --- 3. TRANSLATION ---
+            setProgress({ stage: 'processing', progress: 40, message: `Traduzindo com ${translationProvider === 'gemini' ? 'Gemini' : 'OpenAI'}...` });
+
+            let translated;
+            if (translationProvider === 'gemini') {
+                translated = await translateIsochronic(
+                    apiKeys.gemini,
+                    transcript,
+                    'pt-BR',
+                    (msg: string) => setProgress({ stage: 'processing', progress: 45, message: msg })
+                );
+            } else {
+                translated = await translateWithOpenAI(
+                    apiKeys.openai,
+                    transcript,
+                    'pt-BR',
+                    (msg: string) => setProgress({ stage: 'processing', progress: 45, message: msg })
+                );
+            }
             setTranslatedSegments(translated);
 
             // --- 4. TTS (OPENAI) ---
-            setProgress({ stage: 'processing', progress: 60, message: 'Gerando dublagem com OpenAI TTS...' });
+            setProgress({ stage: 'processing', progress: 60, message: 'Gerando dublagem com Edge TTS...' });
             const processedSegments = [];
 
             for (let i = 0; i < translated.length; i++) {
@@ -90,7 +114,6 @@ export default function HomePage() {
                 });
 
                 const audioBlob = await generateSpeech(
-                    apiKeys.openai,
                     seg.translatedText,
                     selectedVoice
                 );
