@@ -5,6 +5,7 @@ export interface TranscriptSegment {
     end: number; // segundos
     text: string;
     language?: string;
+    speaker?: string;
 }
 
 // Segmento traduzido com metadata de timing

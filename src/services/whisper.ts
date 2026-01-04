@@ -1,170 +1,99 @@
 import OpenAI from 'openai';
 import type { TranscriptSegment } from '@/types';
 
-/**
- * Transcreve áudio usando OpenAI Whisper API com timestamps precisos
- * Muito mais preciso que Gemini para timestamps de segmentos
- */
 export async function transcribeWithWhisper(
     apiKey: string,
     audioBlob: Blob,
     onProgress?: (message: string) => void
 ): Promise<TranscriptSegment[]> {
+    if (!apiKey) throw new Error('API Key da OpenAI não fornecida');
+
+    const openai = new OpenAI({
+        apiKey: apiKey,
+        dangerouslyAllowBrowser: true // Client-side usage
+    });
+
+    onProgress?.('Enviando áudio para Whisper API...');
+
+    // Convert Blob to File (Whisper API requires File object with name)
+    const file = new File([audioBlob], 'audio.mp3', { type: 'audio/mp3' });
+
     try {
-        onProgress?.('Conectando com Whisper API...');
-
-        const openai = new OpenAI({
-            apiKey,
-            dangerouslyAllowBrowser: true,
-        });
-
-        // Converter Blob para File (Whisper API requer File)
-        const audioFile = new File([audioBlob], 'audio.mp3', { type: 'audio/mpeg' });
-
-        onProgress?.('Processando transcrição (isso pode levar alguns segundos)...');
-
-        // Usar Whisper com timestamps de segmento
-        const transcription = await openai.audio.transcriptions.create({
-            file: audioFile,
-            model: 'whisper-1',
-            response_format: 'verbose_json', // Necessário para timestamps
-            timestamp_granularities: ['segment'], // Timestamps por segmento
-        });
-
-        onProgress?.('Processando segmentos...');
-
-        // Verificar se temos segmentos
-        if (!transcription.segments || transcription.segments.length === 0) {
-            throw new Error('Whisper não retornou segmentos. Tente um áudio diferente.');
-        }
-
-        // Converter formato Whisper para nosso formato
-        const segments: TranscriptSegment[] = transcription.segments.map((seg, index) => ({
-            id: `seg-${index + 1}`,
-            start: seg.start,
-            end: seg.end,
-            text: seg.text.trim(),
-        }));
-
-        // Validar segmentos
-        const validSegments = segments.filter(seg => {
-            // Garantir tempos válidos
-            if (seg.end <= seg.start) return false;
-            if (seg.end - seg.start < 0.1) return false; // Mínimo 100ms
-            if (!seg.text || seg.text.length === 0) return false;
-            return true;
-        });
-
-        if (validSegments.length === 0) {
-            throw new Error('Nenhum segmento válido encontrado na transcrição.');
-        }
-
-        // MERGE: Combinar fragmentos em frases completas
-        const mergedSegments = mergeIntoSentences(validSegments);
-
-        onProgress?.(`✅ ${mergedSegments.length} frases transcritas com precisão!`);
-
-        return mergedSegments;
-
-    } catch (error: any) {
-        console.error('Erro Whisper API:', error);
-
-        if (error.status === 401) {
-            throw new Error('API Key OpenAI inválida. Verifique sua chave nas configurações.');
-        }
-
-        if (error.code === 'invalid_file_format') {
-            throw new Error('Formato de áudio não suportado. Use MP3, WAV ou M4A.');
-        }
-
-        throw new Error(`Erro Whisper: ${error.message || 'Erro desconhecido'}`);
-    }
-}
-
-/**
- * Detecta idioma do áudio usando Whisper
- */
-export async function detectLanguageWithWhisper(
-    apiKey: string,
-    audioBlob: Blob
-): Promise<string> {
-    try {
-        const openai = new OpenAI({
-            apiKey,
-            dangerouslyAllowBrowser: true,
-        });
-
-        const audioFile = new File([audioBlob], 'audio.mp3', { type: 'audio/mpeg' });
-
-        const transcription = await openai.audio.transcriptions.create({
-            file: audioFile,
+        const response = await openai.audio.transcriptions.create({
+            file: file,
             model: 'whisper-1',
             response_format: 'verbose_json',
+            timestamp_granularities: ['segment'] // Request segment timestamps
         });
 
-        // Whisper retorna código ISO do idioma detectado
-        return transcription.language || 'en';
+        onProgress?.('Processando resposta do Whisper...');
+
+        let segments: TranscriptSegment[] = [];
+
+        // Map response to our internal format
+        if (response.segments) {
+            segments = response.segments.map((seg: any, index: number) => ({
+                id: `raw_${index}`,
+                start: seg.start,
+                end: seg.end,
+                text: seg.text.trim(),
+                speaker: 'Speaker'
+            }));
+        } else {
+            segments = [{
+                id: 'raw_0',
+                start: 0,
+                end: response.duration || 0,
+                text: response.text,
+                speaker: 'Speaker'
+            }];
+        }
+
+        // Post-processing: Combine segments into full sentences
+        return combineSegmentsIntoSentences(segments);
 
     } catch (error: any) {
-        console.error('Erro ao detectar idioma:', error);
-        return 'en'; // Fallback
+        console.error('Whisper API Error:', error);
+        throw new Error(`Erro na transcrição Whisper: ${error.message}`);
     }
 }
 
 /**
- * Mescla segmentos pequenos em frases completas baseado em pontuação
- * Isso evita pausas estranhas no meio de frases
+ * Combines small segments into full sentences based on punctuation.
  */
-function mergeIntoSentences(segments: TranscriptSegment[]): TranscriptSegment[] {
-    if (segments.length === 0) return [];
+function combineSegmentsIntoSentences(segments: TranscriptSegment[]): TranscriptSegment[] {
+    const combined: TranscriptSegment[] = [];
+    let currentGroup: TranscriptSegment[] = [];
 
-    const merged: TranscriptSegment[] = [];
-    let currentSentence: TranscriptSegment | null = null;
+    segments.forEach((seg, index) => {
+        currentGroup.push(seg);
 
-    for (let i = 0; i < segments.length; i++) {
-        const seg = segments[i];
+        const text = seg.text.trim();
+        const hasEndPunctuation = /[.!?]$/.test(text);
 
-        if (!currentSentence) {
-            // Inicia uma nova frase
-            currentSentence = { ...seg };
-        } else {
-            // Adiciona à frase atual
-            currentSentence.text += ' ' + seg.text;
-            currentSentence.end = seg.end;
-        }
+        // Check if next segment is far way (pause > 1s) - force break to keep sync
+        const nextSeg = segments[index + 1];
+        const isBigPause = nextSeg && (nextSeg.start - seg.end > 1.5);
 
-        // Verifica se a frase termina com pontuação final
-        const endsWithPunctuation = /[.!?;:]$/.test(currentSentence.text.trim());
-        const isLastSegment = i === segments.length - 1;
+        // Merge if we have punctuation OR a big pause OR it's the last segment
+        if (hasEndPunctuation || isBigPause || index === segments.length - 1) {
 
-        // Ou se a próxima frase começar com maiúscula (indica nova frase)
-        const nextStartsCapital = i < segments.length - 1 &&
-            /^[A-ZÀ-Ú]/.test(segments[i + 1].text.trim());
+            // Create merged segment
+            const mergedText = currentGroup.map(s => s.text.trim()).join(' ');
+            const start = currentGroup[0].start;
+            const end = currentGroup[currentGroup.length - 1].end;
 
-        // Finaliza a frase se:
-        // 1. Termina com pontuação
-        // 2. É o último segmento
-        // 3. Próximo começa com maiúscula E duração atual > 3s (evita quebras muito pequenas)
-        const shouldFinalize = endsWithPunctuation ||
-            isLastSegment ||
-            (nextStartsCapital && (currentSentence.end - currentSentence.start) > 3);
-
-        if (shouldFinalize) {
-            merged.push({
-                ...currentSentence,
-                id: `seg-${merged.length + 1}`,
+            combined.push({
+                id: `seg_${combined.length}`,
+                start,
+                end,
+                text: mergedText,
+                speaker: currentGroup[0].speaker // Keep first speaker
             });
-            currentSentence = null;
+
+            currentGroup = [];
         }
-    }
+    });
 
-    // Se sobrou alguma frase incompleta, adiciona
-    if (currentSentence) {
-        merged.push({
-            ...currentSentence,
-            id: `seg-${merged.length + 1}`,
-        });
-    }
-
-    return merged;
+    return combined;
 }

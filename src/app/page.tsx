@@ -1,10 +1,13 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useApp } from '@/contexts/AppContext';
-import { Sparkles, Sun, Moon } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { Sun, Moon } from 'lucide-react';
 
 // Views
+import LoginScreen from '@/components/auth/LoginScreen';
+import ProjectList from '@/components/projects/ProjectList';
 import SetupView from '@/components/setup/SetupView';
 import ProcessingView from '@/components/processing/ProcessingView';
 import EditorView from '@/components/editor/EditorView';
@@ -13,9 +16,13 @@ import EditorView from '@/components/editor/EditorView';
 import { translateIsochronic } from '@/services/gemini';
 import { transcribeWithWhisper } from '@/services/whisper';
 import { generateSpeech } from '@/services/openai';
-import { extractAudio, adjustSpeed, assembleAudio, getAudioDuration, loadFFmpeg } from '@/services/ffmpeg';
+import { extractAudio, assembleAudio, loadFFmpeg } from '@/services/ffmpeg';
+import { createProject, updateProject, uploadFile } from '@/services/projectService';
+
+import type { Project } from '@/types/project';
 
 export default function HomePage() {
+    const { user, loading: authLoading } = useAuth();
     const {
         hasApiKeys,
         apiKeys,
@@ -31,10 +38,15 @@ export default function HomePage() {
         selectedVoice,
         theme,
         toggleTheme,
+        setSourceFile,
     } = useApp();
 
+    const [currentProject, setCurrentProject] = useState<Project | null>(null);
+    const [projectName, setProjectName] = useState('');
+    const [showProjectList, setShowProjectList] = useState(true);
+
     const handleProcessProject = async () => {
-        if (!hasApiKeys || !sourceFile) return;
+        if (!hasApiKeys || !sourceFile || !user) return;
 
         try {
             setStage('processing');
@@ -49,59 +61,47 @@ export default function HomePage() {
             // --- 2. TRANSCRIPTION (WHISPER) ---
             setProgress({ stage: 'processing', progress: 15, message: 'Transcrevendo com Whisper (preciso)...' });
             const transcript = await transcribeWithWhisper(
-                apiKeys.openai, // Whisper usa API key da OpenAI
+                apiKeys.openai,
                 audioBlob,
-                (msg) => setProgress({ stage: 'processing', progress: 20, message: msg })
+                (msg: string) => setProgress({ stage: 'processing', progress: 20, message: msg })
             );
             setTranscriptSegments(transcript);
 
-            // --- 3. TRANSLATION ---
-            setProgress({ stage: 'processing', progress: 40, message: 'Traduzindo e adaptando (Gemini)...' });
+            // --- 3. TRANSLATION (GEMINI) ---
+            setProgress({ stage: 'processing', progress: 40, message: 'Traduzindo com Gemini...' });
             const translated = await translateIsochronic(
                 apiKeys.gemini,
                 transcript,
-                'pt-br',
-                (msg) => setProgress({ stage: 'processing', progress: 50, message: msg })
+                'pt-BR',
+                (msg: string) => setProgress({ stage: 'processing', progress: 45, message: msg })
             );
             setTranslatedSegments(translated);
 
-            // --- 4. DUBBING (TTS) & SYNC ---
-            setProgress({ stage: 'processing', progress: 60, message: 'Gerando dublagem (OpenAI)...' });
-
+            // --- 4. TTS (OPENAI) ---
+            setProgress({ stage: 'processing', progress: 60, message: 'Gerando dublagem com OpenAI TTS...' });
             const processedSegments = [];
-            let completed = 0;
 
             for (let i = 0; i < translated.length; i++) {
                 const seg = translated[i];
-                const targetDuration = seg.end - seg.start;
-
-                // Call OpenAI TTS
-                const ttsBlob = await generateSpeech(apiKeys.openai, seg.translatedText, selectedVoice);
-                const currentDuration = await getAudioDuration(ttsBlob);
-
-                let finalBlob = ttsBlob;
-
-                // Auto-Speed Adjustment (CapCut style pre-processing)
-                if (currentDuration > targetDuration + 0.2) {
-                    const speedFactor = currentDuration / targetDuration;
-                    finalBlob = await adjustSpeed(ttsBlob, speedFactor);
-                }
-
-                processedSegments.push({
-                    id: seg.id, // Ensure ID is passed if available, or generate one
-                    audioBlob: finalBlob,
-                    startTime: seg.start,
-                    duration: currentDuration,
-                    targetDuration,
-                    needsStretch: currentDuration > targetDuration
-                });
-
-                completed++;
-                const pct = 60 + Math.round((completed / translated.length) * 30); // 60% -> 90%
                 setProgress({
                     stage: 'processing',
-                    progress: pct,
-                    message: `Gerando segmento ${completed}/${translated.length}`
+                    progress: 60 + (i / translated.length) * 30,
+                    message: `Gerando TTS ${i + 1}/${translated.length}...`
+                });
+
+                const audioBlob = await generateSpeech(
+                    apiKeys.openai,
+                    seg.translatedText,
+                    selectedVoice
+                );
+
+                processedSegments.push({
+                    id: seg.id,
+                    audioBlob,
+                    duration: audioBlob.size / 24000,
+                    targetDuration: seg.end - seg.start,
+                    startTime: seg.start,
+                    needsStretch: false
                 });
             }
 
@@ -110,12 +110,9 @@ export default function HomePage() {
             // --- 5. INITIAL ASSEMBLY (Preview) ---
             setProgress({ stage: 'processing', progress: 95, message: 'Montando preview inicial...' });
 
-            // We assemble it once so the Editor has a baseline "Full Audio" 
-            // even though the timeline will play individual blobs later.
             const lastSeg = translated[translated.length - 1];
             const totalDuration = lastSeg ? lastSeg.end + 2 : 0;
 
-            // Convert processed segments to assembleAudio format
             const dubbedSegments = processedSegments.map(seg => ({
                 blob: seg.audioBlob,
                 start: seg.startTime
@@ -124,55 +121,102 @@ export default function HomePage() {
             const finalAudio = await assembleAudio(audioBlob, dubbedSegments, totalDuration);
             setFinalAudioBlob(finalAudio);
 
+            // --- 6. SAVE PROJECT TO FIREBASE ---
+            setProgress({ stage: 'processing', progress: 97, message: 'Salvando projeto...' });
+
+            try {
+                // Upload disabled (No Storage Access)
+                // const sourceUrl = await uploadFile(...)
+
+                // Create project in Firestore (Metadata only)
+                const projectId = await createProject({
+                    name: projectName,
+                    userId: user.uid,
+                    sourceFileName: sourceFile.name,
+                    sourceFileUrl: '', // No storage URL
+                    transcriptSegments: transcript,
+                    translatedSegments: translated,
+                    duration: totalDuration,
+                    selectedVoice: selectedVoice
+                });
+
+                console.log('Project saved:', projectId);
+            } catch (err) {
+                console.error('Error saving project:', err);
+                // Continue even if save fails
+            }
+
             // --- DONE ---
             setProgress(null);
             setStage('editor');
 
         } catch (error: any) {
             console.error('Erro no processamento:', error);
-            alert(`Erro: ${error.message || 'Falha desconhecida'}`);
+            alert(`Erro: ${error.message}`);
             setStage('setup');
             setProgress(null);
         }
     };
 
+    const handleNewProject = () => {
+        setShowProjectList(false);
+        setCurrentProject(null);
+        setStage('setup');
+    };
+
+    const handleLoadProject = async (project: Project) => {
+        setCurrentProject(project);
+        setProjectName(project.name);
+        setTranscriptSegments(project.transcriptSegments || []);
+        setTranslatedSegments(project.translatedSegments || []);
+
+        // TODO: Load source file from Storage URL
+        // For now just go to editor mode
+        setShowProjectList(false);
+        setStage('editor');
+    };
+
+    // Loading state
+    if (authLoading) {
+        return (
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="w-12 h-12 border-4 border-primary-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+        );
+    }
+
+    // Not logged in
+    if (!user) {
+        return <LoginScreen />;
+    }
+
+    // Show project list
+    if (showProjectList) {
+        return <ProjectList onNewProject={handleNewProject} onLoadProject={handleLoadProject} />;
+    }
+
+    // Main app flow
     return (
-        <div className="min-h-screen transition-colors duration-300 bg-gray-50 dark:bg-gray-950">
-            {/* Header */}
-            <header className="bg-white/80 dark:bg-gray-900/80 backdrop-blur-lg border-b border-gray-200 dark:border-gray-800 sticky top-0 z-10 h-16 flex items-center justify-between px-6">
-                <div className="flex items-center gap-3">
-                    <div className="p-1.5 bg-gradient-to-br from-primary-500 to-accent-500 rounded-lg">
-                        <Sparkles className="w-5 h-5 text-white" />
-                    </div>
-                    <h1 className="text-xl font-bold bg-gradient-to-r from-primary-600 to-accent-600 bg-clip-text text-transparent">
-                        DubAI-PRO <span className="text-xs font-normal text-gray-500 dark:text-gray-400 ml-1">v2.0</span>
-                    </h1>
-                </div>
+        <div className="min-h-screen bg-white dark:bg-gray-900">
+            {/* Theme Toggle */}
+            <button
+                onClick={toggleTheme}
+                className="fixed top-4 right-4 z-50 p-3 rounded-full bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors shadow-lg"
+                aria-label="Toggle theme"
+            >
+                {theme === 'dark' ? <Sun size={20} className="text-yellow-400" /> : <Moon size={20} className="text-gray-700" />}
+            </button>
 
-                <div className="flex items-center gap-3">
-                    <button
-                        onClick={toggleTheme}
-                        className="p-2 rounded-lg text-gray-600 hover:text-primary-600 dark:text-gray-400 dark:hover:text-primary-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all"
-                    >
-                        {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
-                    </button>
-                </div>
-            </header>
-
-            {/* Main Content Manager */}
-            <main>
-                {stage === 'setup' && (
-                    <SetupView onStartProcessing={handleProcessProject} />
-                )}
-
-                {stage === 'processing' && (
-                    <ProcessingView />
-                )}
-
-                {stage === 'editor' && (
-                    <EditorView />
-                )}
-            </main>
+            {/* Content */}
+            {stage === 'setup' && (
+                <SetupView
+                    onStart={handleProcessProject}
+                    projectName={projectName}
+                    onProjectNameChange={setProjectName}
+                />
+            )}
+            {stage === 'processing' && <ProcessingView />}
+            {stage === 'editor' && <EditorView />}
         </div>
     );
 }

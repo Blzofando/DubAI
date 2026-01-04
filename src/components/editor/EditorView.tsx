@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
+import { RotateCcw, Play, Pause, SkipBack, SkipForward, Upload, FileVideo } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
-import { RotateCcw, Play, Pause, SkipBack, SkipForward } from 'lucide-react';
 import TimelineContainer from './Timeline/TimelineContainer';
 import Inspector from './Inspector/Inspector';
 import { useAudioPlayback } from './hooks/useAudioPlayback';
 import { assembleAudio } from '@/services/ffmpeg';
 
 export default function EditorView() {
-    const { resetAll } = useApp();
+    const { resetAll, sourceFile, setSourceFile } = useApp();
     const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
 
     const {
@@ -96,27 +96,58 @@ export default function EditorView() {
 
             <div className="flex-1 grid grid-cols-3 gap-4 p-4">
                 {/* Left: Video Preview */}
-                <div className="col-span-2 bg-black rounded-2xl flex flex-col items-center justify-center relative overflow-hidden group p-4">
-                    <video
-                        ref={videoRef}
-                        className="h-64 object-contain"
-                    />
+                <div className="col-span-2 bg-black rounded-2xl flex flex-col items-center justify-center relative overflow-hidden group p-4 border border-gray-800 shadow-2xl">
+                    {sourceFile ? (
+                        <>
+                            <video
+                                ref={videoRef}
+                                className="w-full h-full object-contain rounded-lg shadow-2xl"
+                                onClick={togglePlay}
+                                playsInline
+                            />
 
-                    {/* Overlay Controls */}
-                    <div className="absolute bottom-4 flex items-center gap-4 bg-black/50 backdrop-blur-md px-6 py-3 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => seek(Math.max(0, currentTime - 5))} className="text-white hover:text-accent-400">
-                            <SkipBack className="w-5 h-5" />
-                        </button>
-                        <button onClick={togglePlay} className="text-white hover:text-accent-400 transform hover:scale-110 transition-transform">
-                            {isPlaying ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8" />}
-                        </button>
-                        <button onClick={() => seek(Math.min(duration, currentTime + 5))} className="text-white hover:text-accent-400">
-                            <SkipForward className="w-5 h-5" />
-                        </button>
-                        <span className="text-white font-mono text-sm ml-4">
-                            {formatTime(currentTime)} / {formatTime(duration)}
-                        </span>
-                    </div>
+                            {/* Overlay Controls */}
+                            <div className={`absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-4 bg-black/60 backdrop-blur-md px-6 py-3 rounded-full transition-all duration-300 ${isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'}`}>
+                                <button onClick={() => seek(Math.max(0, currentTime - 5))} className="text-white hover:text-accent-400 transition-colors">
+                                    <SkipBack className="w-5 h-5" />
+                                </button>
+                                <button onClick={togglePlay} className="text-white hover:text-accent-400 transform hover:scale-110 transition-transform">
+                                    {isPlaying ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8" />}
+                                </button>
+                                <button onClick={() => seek(Math.min(duration, currentTime + 5))} className="text-white hover:text-accent-400 transition-colors">
+                                    <SkipForward className="w-5 h-5" />
+                                </button>
+                                <span className="text-white font-mono text-sm ml-4 border-l border-gray-600 pl-4">
+                                    {formatTime(currentTime)} / {formatTime(duration)}
+                                </span>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="text-center p-8 z-10 w-full">
+                            <div className="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+                                <FileVideo className="text-gray-400" size={40} />
+                            </div>
+                            <h3 className="text-xl font-bold text-white mb-2">Vídeo Original Necessário</h3>
+                            <p className="text-gray-400 mb-6 max-w-md mx-auto">
+                                Como não usamos armazenamento em nuvem para arquivos grandes,
+                                selecione o vídeo original do seu computador para continuar editando.
+                            </p>
+                            <label className="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white font-semibold rounded-xl cursor-pointer transition-all transform hover:scale-105 shadow-lg hover:shadow-primary-600/20">
+                                <Upload size={20} />
+                                Selecionar Arquivo
+                                <input
+                                    type="file"
+                                    accept="video/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                        if (e.target.files?.[0]) {
+                                            setSourceFile(e.target.files[0]);
+                                        }
+                                    }}
+                                />
+                            </label>
+                        </div>
+                    )}
                 </div>
 
                 {/* Right: Inspector */}
