@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { EdgeTTS } from 'node-edge-tts';
+import { readFile, unlink } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 export async function POST(req: NextRequest) {
     try {
@@ -27,13 +30,14 @@ export async function POST(req: NextRequest) {
             outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
         });
 
-        // node-edge-tts often allows ttsPromise returning base64 if no file provided?
-        // Let's assume ttsPromise returning base64. 
-        // If not, I'll need to check the API more closely.
-        // Common fork is: await tts.ttsPromise(text) -> string (base64)
+        // ttsPromise requires file path as second argument
+        const tempFile = join(tmpdir(), `tts-${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`);
 
-        const base64Audio = await tts.ttsPromise(safeText);
-        const audioBuffer = Buffer.from(base64Audio, 'base64');
+        await tts.ttsPromise(safeText, tempFile);
+        const audioBuffer = await readFile(tempFile);
+
+        // Cleanup
+        await unlink(tempFile).catch(() => { }); // Ignore cleanup errors
 
         return new NextResponse(audioBuffer, {
             headers: {
