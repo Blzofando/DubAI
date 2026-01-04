@@ -114,38 +114,44 @@ export default function HomePage() {
                     message: `Gerando TTS ${i + 1}/${translated.length}...`
                 });
 
-                let audioBlob = await generateSpeech(
-                    seg.translatedText,
-                    selectedVoice
-                );
-
-                // Try to remove silence - if it fails, continue with original audio
                 try {
-                    audioBlob = await removeSilence(audioBlob);
-                } catch (error) {
-                    console.warn(`Não foi possível remover silêncio do segmento ${i + 1}:`, error);
-                    // Continue with original audio blob
+                    let audioBlob = await generateSpeech(
+                        seg.translatedText,
+                        selectedVoice
+                    );
+
+                    // Try to remove silence - if it fails, continue with original audio
+                    try {
+                        audioBlob = await removeSilence(audioBlob);
+                    } catch (error) {
+                        console.warn(`Não foi possível remover silêncio do segmento ${i + 1}:`, error);
+                        // Continue with original audio blob
+                    }
+
+                    // Calculate actual audio duration (after silence removal if successful)
+                    const actualDuration = await new Promise<number>((resolve, reject) => {
+                        const audio = new Audio();
+                        audio.onloadedmetadata = () => resolve(audio.duration);
+                        audio.onerror = reject;
+                        audio.src = URL.createObjectURL(audioBlob);
+                    });
+
+                    const targetDuration = seg.end - seg.start;
+                    const needsAdjustment = Math.abs(actualDuration - targetDuration) > 0.2;
+
+                    processedSegments.push({
+                        id: seg.id,
+                        audioBlob,
+                        duration: actualDuration,
+                        targetDuration,
+                        startTime: seg.start,
+                        needsStretch: needsAdjustment
+                    });
+                } catch (error: any) {
+                    console.error(`Erro ao processar TTS do segmento ${i + 1}:`, error);
+                    // Skip this segment and continue
+                    alert(`Erro ao gerar áudio para segmento ${i + 1}: ${error.message}\nContinuando com próximos...`);
                 }
-
-                // Calculate actual audio duration (after silence removal if successful)
-                const actualDuration = await new Promise<number>((resolve, reject) => {
-                    const audio = new Audio();
-                    audio.onloadedmetadata = () => resolve(audio.duration);
-                    audio.onerror = reject;
-                    audio.src = URL.createObjectURL(audioBlob);
-                });
-
-                const targetDuration = seg.end - seg.start;
-                const needsAdjustment = Math.abs(actualDuration - targetDuration) > 0.2;
-
-                processedSegments.push({
-                    id: seg.id,
-                    audioBlob,
-                    duration: actualDuration,
-                    targetDuration,
-                    startTime: seg.start,
-                    needsStretch: needsAdjustment
-                });
             }
 
             setAudioSegments(processedSegments);

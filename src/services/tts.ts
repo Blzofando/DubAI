@@ -4,20 +4,35 @@ export async function generateSpeech(
     text: string,
     voice: string = 'pt-BR-AntonioNeural'
 ): Promise<Blob> {
-    const response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text, voice }),
-    });
+    // Create abort controller with 60s timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 segundos
 
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to generate speech');
+    try {
+        const response = await fetch('/api/tts', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ text, voice }),
+            signal: controller.signal // Add timeout signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || 'Failed to generate speech');
+        }
+
+        return await response.blob();
+    } catch (error: any) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+            throw new Error('TTS timeout (60s) - texto muito longo ou serviço lento');
+        }
+        throw error;
     }
-
-    return await response.blob();
 }
 
 /**

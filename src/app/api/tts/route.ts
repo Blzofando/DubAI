@@ -4,7 +4,13 @@ import { readFile, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
+// Aumentar timeout para 60 segundos (limite do plano Hobby da Vercel)
+export const maxDuration = 60;
+
 export async function POST(req: NextRequest) {
+    let safeText = '';
+    let voiceArg = '';
+
     try {
         const { text, voice } = await req.json();
 
@@ -14,7 +20,7 @@ export async function POST(req: NextRequest) {
 
         // Less aggressive sanitization - preserve more characters for better TTS
         // Only remove control characters and problematic symbols
-        const safeText = text
+        safeText = text
             .replace(/[\r\n\t]+/g, ' ') // Remove newlines/tabs
             .replace(/['"]/g, '"')      // Normalize quotes
             .trim();
@@ -23,7 +29,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Text empty after sanitization' }, { status: 400 });
         }
 
-        const voiceArg = voice || 'pt-BR-AntonioNeural';
+        voiceArg = voice || 'pt-BR-AntonioNeural';
 
         const tts = new EdgeTTS({
             voice: voiceArg,
@@ -47,7 +53,18 @@ export async function POST(req: NextRequest) {
             },
         });
     } catch (error: any) {
-        console.error('TTS Error:', error);
-        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+        console.error('TTS Error Details:', {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+            text: safeText?.substring(0, 100), // Log primeiro 100 chars do texto
+            voice: voiceArg
+        });
+
+        // Retornar mensagem mais específica
+        const errorMessage = error.message || 'Erro ao gerar áudio';
+        return NextResponse.json({
+            error: `Falha no TTS: ${errorMessage}`
+        }, { status: 500 });
     }
 }
