@@ -119,10 +119,15 @@ export default function HomePage() {
                     selectedVoice
                 );
 
-                // Remove silence from beginning and end
-                audioBlob = await removeSilence(audioBlob);
+                // Try to remove silence - if it fails, continue with original audio
+                try {
+                    audioBlob = await removeSilence(audioBlob);
+                } catch (error) {
+                    console.warn(`Não foi possível remover silêncio do segmento ${i + 1}:`, error);
+                    // Continue with original audio blob
+                }
 
-                // Calculate actual audio duration (after silence removal)
+                // Calculate actual audio duration (after silence removal if successful)
                 const actualDuration = await new Promise<number>((resolve, reject) => {
                     const audio = new Audio();
                     audio.onloadedmetadata = () => resolve(audio.duration);
@@ -157,14 +162,20 @@ export default function HomePage() {
                         message: `Ajustando ${i + 1}/${processedSegments.length}...`
                     });
 
-                    const speedFactor = seg.duration / seg.targetDuration;
-                    const adjustedBlob = await adjustAudioSpeed(seg.audioBlob, speedFactor);
+                    try {
+                        const speedFactor = seg.duration / seg.targetDuration;
+                        const adjustedBlob = await adjustAudioSpeed(seg.audioBlob, speedFactor);
 
-                    // Update segment with adjusted audio and save the applied speed factor
-                    seg.audioBlob = adjustedBlob;
-                    seg.duration = seg.targetDuration;
-                    seg.needsStretch = false;
-                    seg.appliedSpeedFactor = speedFactor; // Save the speed that was applied
+                        // Update segment with adjusted audio and save the applied speed factor
+                        seg.audioBlob = adjustedBlob;
+                        seg.duration = seg.targetDuration;
+                        seg.needsStretch = false;
+                        seg.appliedSpeedFactor = speedFactor; // Save the speed that was applied
+                    } catch (error) {
+                        console.warn(`Não foi possível ajustar velocidade do segmento ${i + 1}:`, error);
+                        // Keep needsStretch = true so user can adjust manually in editor
+                        // Don't update the blob - keep original
+                    }
                 }
             }
 
