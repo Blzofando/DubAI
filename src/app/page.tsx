@@ -8,7 +8,10 @@ import { Sun, Moon } from 'lucide-react';
 // Views
 import LoginScreen from '@/components/auth/LoginScreen';
 import ProjectList from '@/components/projects/ProjectList';
-import SetupView from '@/components/setup/SetupView';
+import HomePage from '@/components/home/HomePage';
+import SettingsView from '@/components/settings/SettingsView';
+import SimpleDubbingView from '@/components/dubbing/SimpleDubbingView';
+import LongDubbingView from '@/components/dubbing/LongDubbingView';
 import ProcessingView from '@/components/processing/ProcessingView';
 import EditorView from '@/components/editor/EditorView';
 
@@ -17,13 +20,14 @@ import { translateIsochronic, transcribeAudio } from '@/services/gemini';
 import { transcribeWithWhisper } from '@/services/whisper';
 import { translateWithOpenAI } from '@/services/openaiTranslation';
 import { generateSpeech } from '@/services/tts';
-import { extractAudio, assembleAudio, loadFFmpeg, adjustAudioSpeed, removeSilence } from '@/services/ffmpeg';
+import { generateSpeechBatch } from '@/services/batchTTS';
+import { extractAudio, assembleAudio, assembleDubbingOnly, loadFFmpeg, terminateFFmpeg, adjustAudioSpeed, removeSilence } from '@/services/ffmpeg';
 import { createProject, updateProject, uploadFile } from '@/services/projectService';
 
 import type { Project } from '@/types/project';
 import type { AudioSegment } from '@/types';
 
-export default function HomePage() {
+export default function MainPage() {
     const { user, loading: authLoading } = useAuth();
     const {
         hasApiKeys,
@@ -43,9 +47,12 @@ export default function HomePage() {
         transcriptionProvider,
         translationProvider,
         setSourceFile,
+        currentView,
+        setCurrentView,
+        currentProject,
+        setCurrentProject
     } = useApp();
 
-    const [currentProject, setCurrentProject] = useState<Project | null>(null);
     const [projectName, setProjectName] = useState('');
     const [showProjectList, setShowProjectList] = useState(true);
 
@@ -54,6 +61,7 @@ export default function HomePage() {
 
         try {
             setStage('processing');
+            setCurrentView('processing');
 
             // --- 1. SETUP & EXTRACTION ---
             setProgress({ stage: 'processing', progress: 0, message: 'Iniciando engine...' });
@@ -221,6 +229,19 @@ export default function HomePage() {
                 });
 
                 console.log('Project saved:', projectId);
+
+                setCurrentProject({
+                    id: projectId,
+                    name: projectName,
+                    userId: user.uid,
+                    sourceFileName: sourceFile.name,
+                    transcriptSegments: transcript,
+                    translatedSegments: translated,
+                    duration: totalDuration,
+                    selectedVoice: selectedVoice,
+                    createdAt: new Date() as any, // Simulação para UI
+                    updatedAt: new Date() as any
+                });
             } catch (err) {
                 console.error('Error saving project:', err);
                 // Continue even if save fails
@@ -229,11 +250,182 @@ export default function HomePage() {
             // --- DONE ---
             setProgress(null);
             setStage('editor');
+            setCurrentView('editor');
 
         } catch (error: any) {
             console.error('Erro no processamento:', error);
             alert(`Erro: ${error.message}`);
             setStage('setup');
+            setCurrentView('dubbing');
+            setProgress(null);
+        }
+    };
+
+    // Handler for Long Dubbed (Batch TTS Processing)
+    const handleProcessLongProject = async () => {
+        if (!hasApiKeys || !sourceFile || !user) return;
+
+        try {
+            setStage('processing');
+            setCurrentView('processing');
+
+            // --- 1. SETUP & EXTRACTION ---
+            setProgress({ stage: 'processing', progress: 0, message: 'Iniciando engine...' });
+            await loadFFmpeg();
+
+            setProgress({ stage: 'processing', progress: 5, message: 'Extraindo áudio original...' });
+            const audioBlob = await extractAudio(sourceFile);
+
+            // --- 2. TRANSCRIPTION ---
+            setProgress({ stage: 'processing', progress: 15, message: `Transcrevendo com ${transcriptionProvider === 'whisper' ? 'Whisper' : 'Gemini'}...` });
+
+            let transcript;
+            if (transcriptionProvider === 'whisper') {
+                transcript = await transcribeWithWhisper(
+                    apiKeys.openai,
+                    audioBlob,
+                    (msg: string) => setProgress({ stage: 'processing', progress: 20, message: msg })
+                );
+            } else {
+                transcript = await transcribeAudio(
+                    apiKeys.gemini,
+                    audioBlob,
+                    (msg: string) => setProgress({ stage: 'processing', progress: 20, message: msg })
+                );
+            }
+            setTranscriptSegments(transcript);
+
+            // --- 3. TRANSLATION ---
+            setProgress({ stage: 'processing', progress: 30, message: `Traduzindo com ${translationProvider === 'openai' ? 'OpenAI' : 'Gemini'}...` });
+
+            let translated;
+            if (translationProvider === 'openai') {
+                translated = await translateWithOpenAI(
+                    apiKeys.openai,
+                    transcript
+                );
+            } else {
+                translated = await translateIsochronic(
+                    apiKeys.gemini,
+                    transcript
+                );
+            }
+            setTranslatedSegments(translated);
+
+            // --- 4. BATCH TTS (PARALLEL) ---
+            setProgress({ stage: 'processing', progress: 60, message: '⚡ Gerando dublagem em batches paralelos...' });
+
+            const processedSegments = await generateSpeechBatch(
+                translated,
+                selectedVoice,
+                { batchSize: 5, delayBetweenBatches: 500 },
+                (current, total, message) => {
+                    const progress = 60 + (current / total) * 30;
+                    setProgress({
+                        stage: 'processing',
+                        progress,
+                        message: `⚡ ${message}`
+                    });
+                }
+            );
+
+            setAudioSegments(processedSegments);
+
+            // Auto-apply speed adjustment SEQUENTIALLY (ONE BY ONE) to avoid memory issues
+            setProgress({ stage: 'processing', progress: 90, message: 'Ajustando velocidades...' });
+
+            const segmentsToAdjust = processedSegments.filter(seg => seg.needsStretch);
+
+            for (let i = 0; i < segmentsToAdjust.length; i++) {
+                const seg = segmentsToAdjust[i];
+
+                setProgress({
+                    stage: 'processing',
+                    progress: 90 + ((i / segmentsToAdjust.length) * 5),
+                    message: `Ajustando ${i + 1}/${segmentsToAdjust.length}...`
+                });
+
+                // Reload FFmpeg every 10 segments to clear accumulated memory
+                if (i > 0 && i % 10 === 0) {
+                    console.log(`Reloading FFmpeg after ${i} adjustments to clear memory...`);
+                    await loadFFmpeg();
+                    // Give it a moment to stabilize
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                }
+
+                try {
+                    const speedFactor = seg.duration / seg.targetDuration;
+                    const adjustedBlob = await adjustAudioSpeed(seg.audioBlob, speedFactor);
+
+                    seg.audioBlob = adjustedBlob;
+                    seg.duration = seg.targetDuration;
+                    seg.appliedSpeedFactor = speedFactor;
+                    seg.needsStretch = false;
+                } catch (error) {
+                    console.warn(`Não foi possível ajustar velocidade do segmento ${i + 1}:`, error);
+                    // Keep segment as-is with needsStretch = true for manual adjustment
+                }
+
+                // Small delay between each adjustment to help with memory stability
+                if (i < segmentsToAdjust.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                }
+            }
+
+            // --- 5. ASSEMBLE ---
+            setProgress({ stage: 'processing', progress: 95, message: 'Montando áudio final...' });
+
+            const videoDuration = await new Promise<number>((resolve) => {
+                const video = document.createElement('video');
+                video.onloadedmetadata = () => resolve(video.duration);
+                video.src = URL.createObjectURL(sourceFile);
+            });
+
+            const finalBlob = await assembleDubbingOnly(
+                processedSegments.map(s => ({
+                    blob: s.audioBlob,
+                    start: s.startTime
+                })),
+                videoDuration
+            );
+
+            setFinalAudioBlob(finalBlob);
+
+            // Save project
+            const projectId = await createProject({
+                name: projectName,
+                userId: user.uid,
+                sourceFileName: sourceFile.name,
+                transcriptSegments: transcript,
+                translatedSegments: translated
+            });
+
+            setCurrentProject({
+                id: projectId,
+                name: projectName,
+                userId: user.uid,
+                sourceFileName: sourceFile.name,
+                transcriptSegments: transcript,
+                translatedSegments: translated,
+                duration: videoDuration,
+                selectedVoice: selectedVoice,
+                createdAt: new Date() as any,
+                updatedAt: new Date() as any
+            });
+
+            // Upload source file to storage
+            await uploadFile(sourceFile, `projects/${projectId}/source`);
+
+            // --- DONE ---
+            setProgress(null);
+            setStage('editor');
+            setCurrentView('editor');
+
+        } catch (error: any) {
+            console.error('Erro no processamento:', error);
+            alert(`Erro: ${error.message}`);
+            setStage('setup');
+            setCurrentView('long-dubbing');
             setProgress(null);
         }
     };
@@ -241,7 +433,11 @@ export default function HomePage() {
     const handleNewProject = () => {
         setShowProjectList(false);
         setCurrentProject(null);
-        setStage('setup');
+        setCurrentView('home');
+    };
+
+    const handleBackToProjects = () => {
+        setShowProjectList(true);
     };
 
     const handleLoadProject = async (project: Project) => {
@@ -254,6 +450,7 @@ export default function HomePage() {
         // For now just go to editor mode
         setShowProjectList(false);
         setStage('editor');
+        setCurrentView('editor');
     };
 
     // Loading state
@@ -287,16 +484,27 @@ export default function HomePage() {
                 {theme === 'dark' ? <Sun size={20} className="text-yellow-400" /> : <Moon size={20} className="text-gray-700" />}
             </button>
 
-            {/* Content */}
-            {stage === 'setup' && (
-                <SetupView
+            {/* Content based on currentView */}
+            {currentView === 'home' && <HomePage onBackToProjects={handleBackToProjects} />}
+            {currentView === 'settings' && <SettingsView onBackToProjects={handleBackToProjects} />}
+            {currentView === 'dubbing' && (
+                <SimpleDubbingView
                     onStart={handleProcessProject}
                     projectName={projectName}
                     onProjectNameChange={setProjectName}
+                    onBackToProjects={handleBackToProjects}
                 />
             )}
-            {stage === 'processing' && <ProcessingView />}
-            {stage === 'editor' && <EditorView />}
+            {currentView === 'long-dubbing' && (
+                <LongDubbingView
+                    onStart={handleProcessLongProject}
+                    projectName={projectName}
+                    onProjectNameChange={setProjectName}
+                    onBackToProjects={handleBackToProjects}
+                />
+            )}
+            {(currentView === 'processing' || stage === 'processing') && <ProcessingView />}
+            {(currentView === 'editor' || stage === 'editor') && <EditorView />}
         </div>
     );
 }

@@ -8,7 +8,7 @@ interface SegmentBlockProps {
     start: number;
     duration: number;
     zoom: number;
-    onDragStart: (id: string, startX: number) => void;
+    onDragStart: (e: React.MouseEvent, id: string, startX: number) => void;
 
     // New Props for selection
     isSelected?: boolean;
@@ -41,7 +41,7 @@ export default function SegmentBlock({ id, text, start, duration, zoom, onDragSt
                 if ((e.target as HTMLElement).classList.contains('cursor-w-resize') || (e.target as HTMLElement).classList.contains('cursor-e-resize')) return;
 
                 e.stopPropagation();
-                onDragStart(id, e.clientX);
+                onDragStart(e, id, e.clientX);
             }}
             onClick={(e) => {
                 e.stopPropagation(); // Stop prop so timeline doesn't seek

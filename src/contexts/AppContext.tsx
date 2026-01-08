@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import type {
     ApiKeys,
     ProcessingStage,
+    CurrentView,
     TranscriptSegment,
     TranslatedSegment,
     AudioSegment,
@@ -11,6 +12,7 @@ import type {
     TranslationProvider,
     ProgressUpdate
 } from '@/types';
+import type { Project } from '@/types/project';
 
 interface AppContextType {
     // API Keys
@@ -52,11 +54,26 @@ interface AppContextType {
     theme: 'light' | 'dark';
     toggleTheme: () => void;
 
+    // Current View
+    currentView: CurrentView;
+    setCurrentView: (view: CurrentView) => void;
+
+    // Speed Adjustment Queue
+    speedAdjustmentQueue: string[];
+    addToSpeedQueue: (id: string) => void;
+    removeFromSpeedQueue: (id: string) => void;
+    clearSpeedQueue: () => void;
+    processSpeedQueue: (onProgress?: (current: number, total: number, msg: string) => void) => Promise<void>;
+
     // Reset
     resetAll: () => void;
     updateAudioSegmentTiming: (id: string, newStartTime: number) => void;
     updateAudioSegmentBlob: (id: string, newBlob: Blob, newDuration: number) => void;
     applySpeedAdjustment: (id: string, onProgress?: (msg: string) => void) => Promise<void>;
+
+    // Current Project
+    currentProject: Project | null;
+    setCurrentProject: (project: Project | null) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -82,6 +99,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Theme state
     const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
+    // Current view state
+    const [currentView, setCurrentView] = useState<CurrentView>('home');
+
     // Data
     const [sourceFile, setSourceFile] = useState<File | null>(null);
     const [sourceLanguage, setSourceLanguage] = useState<string>('');
@@ -96,6 +116,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Provider state
     const [transcriptionProvider, setTranscriptionProvider] = useState<TranscriptionProvider>('whisper');
     const [translationProvider, setTranslationProvider] = useState<TranslationProvider>('gemini');
+
+    // Speed Adjustment Queue
+    const [speedAdjustmentQueue, setSpeedAdjustmentQueue] = useState<string[]>([]);
+
+    // Current Project
+    const [currentProject, setCurrentProject] = useState<Project | null>(null);
 
     // Carregar dados e tema do localStorage ao montar
     useEffect(() => {
@@ -176,7 +202,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setTranscriptSegments([]);
         setTranslatedSegments([]);
         setAudioSegments([]);
+        setAudioSegments([]);
         setFinalAudioBlob(null);
+        setCurrentProject(null);
     };
 
     const updateAudioSegmentTiming = (id: string, newStartTime: number) => {
@@ -235,6 +263,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
     };
 
+    // Speed Queue Management
+    const addToSpeedQueue = (id: string) => {
+        setSpeedAdjustmentQueue(prev => {
+            if (!prev.includes(id)) {
+                return [...prev, id];
+            }
+            return prev;
+        });
+    };
+
+    const removeFromSpeedQueue = (id: string) => {
+        setSpeedAdjustmentQueue(prev => prev.filter(qid => qid !== id));
+    };
+
+    const clearSpeedQueue = () => {
+        setSpeedAdjustmentQueue([]);
+    };
+
+    const processSpeedQueue = async (onProgress?: (current: number, total: number, msg: string) => void) => {
+        const queue = [...speedAdjustmentQueue];
+        const total = queue.length;
+
+        for (let i = 0; i < queue.length; i++) {
+            const id = queue[i];
+            try {
+                onProgress?.(i + 1, total, `Ajustando segmento ${i + 1}/${total}...`);
+                await applySpeedAdjustment(id);
+                removeFromSpeedQueue(id);
+            } catch (error) {
+                console.error(`Failed to adjust speed for segment ${id}:`, error);
+                // Continue with next segment
+            }
+        }
+
+        clearSpeedQueue();
+        onProgress?.(total, total, '✅ Todos os ajustes concluídos!');
+    };
+
     const value: AppContextType = {
         apiKeys,
         saveApiKeys,
@@ -263,10 +329,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSelectedVoice,
         theme,
         toggleTheme,
+        currentView,
+        setCurrentView,
+        speedAdjustmentQueue,
+        addToSpeedQueue,
+        removeFromSpeedQueue,
+        clearSpeedQueue,
+        processSpeedQueue,
         resetAll,
         updateAudioSegmentTiming,
         updateAudioSegmentBlob,
         applySpeedAdjustment,
+        currentProject,
+        setCurrentProject
     };
 
     return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

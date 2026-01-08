@@ -122,14 +122,15 @@ export async function deleteProject(projectId: string, userId: string): Promise<
 }
 
 /**
- * Upload de arquivo para Storage (DISABLED)
+ * Upload de arquivo (DISABLED - sem storage)
  */
 export async function uploadFile(
     file: Blob | File,
     path: string,
     onProgress?: (progress: number) => void
 ): Promise<string> {
-    // Storage Disabled
+    // No storage - apenas retorna vazio
+    onProgress?.(100);
     return '';
 }
 

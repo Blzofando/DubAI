@@ -33,6 +33,15 @@ export type ProcessingStage =
     | 'processing'
     | 'editor';
 
+// Current view state
+export type CurrentView =
+    | 'home'
+    | 'settings'
+    | 'dubbing'
+    | 'long-dubbing'
+    | 'processing'
+    | 'editor';
+
 // Opções de voz OpenAI
 export interface VoiceOption {
     id: string;

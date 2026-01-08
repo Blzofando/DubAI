@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { EdgeTTS } from 'node-edge-tts';
-import { readFile, unlink } from 'fs/promises';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { Communicate } from 'edge-tts-universal';
 
-// Aumentar timeout para 60 segundos (limite do plano Hobby da Vercel)
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
@@ -18,11 +14,9 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Text is required' }, { status: 400 });
         }
 
-        // Less aggressive sanitization - preserve more characters for better TTS
-        // Only remove control characters and problematic symbols
         safeText = text
-            .replace(/[\r\n\t]+/g, ' ') // Remove newlines/tabs
-            .replace(/['"]/g, '"')      // Normalize quotes
+            .replace(/[\r\n\t]+/g, ' ')
+            .replace(/['"]/g, '"')
             .trim();
 
         if (!safeText) {
@@ -31,37 +25,48 @@ export async function POST(req: NextRequest) {
 
         voiceArg = voice || 'pt-BR-AntonioNeural';
 
-        const tts = new EdgeTTS({
+        console.log('[TTS] Generating with edge-tts-universal:', { voice: voiceArg, textLength: safeText.length });
+
+        // Create Communicate instance
+        const communicate = new Communicate(safeText, {
             voice: voiceArg,
-            lang: voiceArg.split('-').slice(0, 2).join('-'),
-            outputFormat: 'audio-24khz-48kbitrate-mono-mp3'
         });
 
-        // ttsPromise requires file path as second argument
-        const tempFile = join(tmpdir(), `tts-${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`);
+        // Stream audio chunks
+        const audioChunks: Buffer[] = [];
 
-        await tts.ttsPromise(safeText, tempFile);
-        const audioBuffer = await readFile(tempFile);
+        for await (const chunk of communicate.stream()) {
+            if (chunk.type === 'audio' && chunk.data) {
+                audioChunks.push(chunk.data);
+            }
+        }
 
-        // Cleanup
-        await unlink(tempFile).catch(() => { }); // Ignore cleanup errors
+        if (audioChunks.length === 0) {
+            throw new Error('No audio data received from TTS service');
+        }
 
-        return new NextResponse(audioBuffer, {
+        // Concatenate all chunks
+        const audioBuffer = Buffer.concat(audioChunks);
+        const uint8Array = new Uint8Array(audioBuffer);
+
+        console.log('[TTS] Successfully generated audio:', { bytes: uint8Array.length });
+
+        return new NextResponse(uint8Array, {
             headers: {
                 'Content-Type': 'audio/mpeg',
-                'Content-Length': audioBuffer.length.toString(),
+                'Content-Length': uint8Array.length.toString(),
             },
         });
+
     } catch (error: any) {
-        console.error('TTS Error Details:', {
+        console.error('[TTS] Error Details:', {
             message: error.message,
             stack: error.stack,
             name: error.name,
-            text: safeText?.substring(0, 100), // Log primeiro 100 chars do texto
+            text: safeText?.substring(0, 100),
             voice: voiceArg
         });
 
-        // Retornar mensagem mais específica
         const errorMessage = error.message || 'Erro ao gerar áudio';
         return NextResponse.json({
             error: `Falha no TTS: ${errorMessage}`

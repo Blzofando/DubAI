@@ -28,15 +28,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
-            setUser(user);
+        // Skip if Firebase is not properly initialized
+        if (!auth || !auth.app) {
             setLoading(false);
-        });
+            return;
+        }
 
-        return unsubscribe;
+        try {
+            const unsubscribe = onAuthStateChanged(auth, (user) => {
+                setUser(user);
+                setLoading(false);
+            });
+
+            return unsubscribe;
+        } catch (error) {
+            console.error('Auth state change error:', error);
+            setLoading(false);
+        }
     }, []);
 
     const signUp = async (email: string, password: string) => {
+        if (!auth || !auth.app) {
+            throw new Error('Firebase não configurado. Configure suas chaves de API.');
+        }
         try {
             await createUserWithEmailAndPassword(auth, email, password);
         } catch (error: any) {
@@ -45,6 +59,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const signIn = async (email: string, password: string) => {
+        if (!auth || !auth.app) {
+            throw new Error('Firebase não configurado. Configure suas chaves de API.');
+        }
         try {
             await signInWithEmailAndPassword(auth, email, password);
         } catch (error: any) {
@@ -56,6 +73,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const signInWithGoogle = async () => {
+        if (!auth || !auth.app) {
+            throw new Error('Firebase não configurado. Configure suas chaves de API.');
+        }
         try {
             const provider = new GoogleAuthProvider();
             await signInWithPopup(auth, provider);
@@ -65,6 +85,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const signOut = async () => {
+        if (!auth || !auth.app) {
+            throw new Error('Firebase não configurado.');
+        }
         try {
             await firebaseSignOut(auth);
         } catch (error: any) {

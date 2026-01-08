@@ -5,10 +5,28 @@ let ffmpegInstance: FFmpeg | null = null;
 let ffmpegLoaded = false;
 
 /**
+ * Termina e limpa instância FFmpeg atual
+ */
+export async function terminateFFmpeg(): Promise<void> {
+    if (ffmpegInstance) {
+        try {
+            await ffmpegInstance.terminate();
+        } catch (e) {
+            console.warn('Error terminating FFmpeg:', e);
+        }
+        ffmpegInstance = null;
+        ffmpegLoaded = false;
+    }
+}
+
+/**
  * Carrega FFmpeg WebAssembly
  */
 export async function loadFFmpeg(): Promise<void> {
-    if (ffmpegLoaded) return;
+    // Terminate existing instance only if it actually exists and is loaded
+    if (ffmpegInstance && ffmpegLoaded) {
+        await terminateFFmpeg();
+    }
 
     ffmpegInstance = new FFmpeg();
 
@@ -79,8 +97,11 @@ export async function adjustAudioSpeed(
     }
 
     const filterChain = filters.join(',');
-    const inputFile = 'input_audio.mp3';
-    const outputFile = 'output_adjusted.mp3';
+
+    // CRITICAL: Use unique filenames to prevent collisions when processing multiple segments
+    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const inputFile = `input_audio_${uniqueId}.mp3`;
+    const outputFile = `output_adjusted_${uniqueId}.mp3`;
 
     try {
         await ffmpegInstance.writeFile(inputFile, await fetchFile(audioBlob));
@@ -95,7 +116,10 @@ export async function adjustAudioSpeed(
 
         const data = await ffmpegInstance.readFile(outputFile) as Uint8Array;
 
-        // CRITICAL: Clean up temp files to prevent memory overflow
+        // CRITICAL: Create a copy of the data to prevent memory access issues after cleanup
+        const dataCopy = new Uint8Array(data);
+
+        // CRITICAL: Clean up temp files immediately to prevent memory overflow
         try {
             await ffmpegInstance.deleteFile(inputFile);
             await ffmpegInstance.deleteFile(outputFile);
@@ -104,7 +128,7 @@ export async function adjustAudioSpeed(
         }
 
         onProgress?.('✅ Velocidade ajustada!');
-        return new Blob([data as BlobPart], { type: 'audio/mpeg' });
+        return new Blob([dataCopy as BlobPart], { type: 'audio/mpeg' });
     } catch (error) {
         // Cleanup on error too
         try {
@@ -130,8 +154,10 @@ export async function removeSilence(
 
     onProgress?.('Removendo silêncio...');
 
-    const inputFile = 'input_silence.mp3';
-    const outputFile = 'output_trimmed.mp3';
+    // CRITICAL: Use unique filenames to prevent collisions when processing multiple segments
+    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const inputFile = `input_silence_${uniqueId}.mp3`;
+    const outputFile = `output_trimmed_${uniqueId}.mp3`;
 
     try {
         await ffmpegInstance.writeFile(inputFile, await fetchFile(audioBlob));
@@ -147,7 +173,10 @@ export async function removeSilence(
 
         const data = await ffmpegInstance.readFile(outputFile) as Uint8Array;
 
-        // CRITICAL: Clean up temp files to prevent memory overflow
+        // CRITICAL: Create a copy of the data to prevent memory access issues after cleanup
+        const dataCopy = new Uint8Array(data);
+
+        // CRITICAL: Clean up temp files immediately to prevent memory overflow
         try {
             await ffmpegInstance.deleteFile(inputFile);
             await ffmpegInstance.deleteFile(outputFile);
@@ -156,7 +185,7 @@ export async function removeSilence(
         }
 
         onProgress?.('✅ Silêncio removido!');
-        return new Blob([data as BlobPart], { type: 'audio/mpeg' });
+        return new Blob([dataCopy as BlobPart], { type: 'audio/mpeg' });
     } catch (error) {
         // Cleanup on error too
         try {
@@ -189,40 +218,67 @@ export async function assembleDubbingOnly(
     if (!ffmpegInstance) throw new Error('FFmpeg não carregado');
     if (dubbedSegments.length === 0) throw new Error('Nenhum segmento para montar');
 
-    // Escrever cada segmento dublado
-    for (let i = 0; i < dubbedSegments.length; i++) {
-        await ffmpegInstance.writeFile(`dub_${i}.mp3`, await fetchFile(dubbedSegments[i].blob));
+    try {
+        // Escrever cada segmento dublado
+        for (let i = 0; i < dubbedSegments.length; i++) {
+            await ffmpegInstance.writeFile(`dub_${i}.mp3`, await fetchFile(dubbedSegments[i].blob));
+        }
+
+        // Construir filtro de delay para cada segmento
+        let filterComplex = '';
+        for (let i = 0; i < dubbedSegments.length; i++) {
+            const delayMs = Math.round(dubbedSegments[i].start * 1000); // ms
+            filterComplex += `[${i}:a]adelay=${delayMs}|${delayMs}[dub${i}];`;
+        }
+
+        // Mixar todos os segmentos com normalização de volume
+        const inputs = dubbedSegments.map((_, i) => `[dub${i}]`);
+        filterComplex += `${inputs.join('')}amix=inputs=${dubbedSegments.length}:duration=longest,volume=2.5,loudnorm=I=-16:TP=-1.5:LRA=11[out]`;
+
+        const inputArgs: string[] = [];
+        for (let i = 0; i < dubbedSegments.length; i++) {
+            inputArgs.push('-i', `dub_${i}.mp3`);
+        }
+
+        await ffmpegInstance.exec([
+            ...inputArgs,
+            '-filter_complex', filterComplex,
+            '-map', '[out]',
+            '-ar', '44100',
+            '-ac', '2',
+            '-b:a', '192k',
+            '-t', totalDuration.toString(),
+            'final_dubbing.mp3'
+        ]);
+
+        const data = await ffmpegInstance.readFile('final_dubbing.mp3') as Uint8Array;
+
+        // CRITICAL: Create a copy of the data to prevent memory access issues after cleanup
+        const dataCopy = new Uint8Array(data);
+
+        // Clean up all temporary files
+        try {
+            for (let i = 0; i < dubbedSegments.length; i++) {
+                await ffmpegInstance.deleteFile(`dub_${i}.mp3`);
+            }
+            await ffmpegInstance.deleteFile('final_dubbing.mp3');
+        } catch (e) {
+            console.warn('Failed to cleanup temp files in assembleDubbingOnly:', e);
+        }
+
+        return new Blob([dataCopy as BlobPart], { type: 'audio/mpeg' });
+    } catch (error) {
+        // Cleanup on error
+        try {
+            for (let i = 0; i < dubbedSegments.length; i++) {
+                await ffmpegInstance.deleteFile(`dub_${i}.mp3`).catch(() => { });
+            }
+            await ffmpegInstance.deleteFile('final_dubbing.mp3').catch(() => { });
+        } catch (e) {
+            // Ignore cleanup errors
+        }
+        throw error;
     }
-
-    // Construir filtro de delay para cada segmento
-    let filterComplex = '';
-    for (let i = 0; i < dubbedSegments.length; i++) {
-        const delayMs = Math.round(dubbedSegments[i].start * 1000); // ms
-        filterComplex += `[${i}:a]adelay=${delayMs}|${delayMs}[dub${i}];`;
-    }
-
-    // Mixar todos os segmentos
-    const inputs = dubbedSegments.map((_, i) => `[dub${i}]`);
-    filterComplex += `${inputs.join('')}amix=inputs=${dubbedSegments.length}:duration=longest[out]`;
-
-    const inputArgs: string[] = [];
-    for (let i = 0; i < dubbedSegments.length; i++) {
-        inputArgs.push('-i', `dub_${i}.mp3`);
-    }
-
-    await ffmpegInstance.exec([
-        ...inputArgs,
-        '-filter_complex', filterComplex,
-        '-map', '[out]',
-        '-ar', '44100',
-        '-ac', '2',
-        '-b:a', '192k',
-        '-t', totalDuration.toString(),
-        'final_dubbing.mp3'
-    ]);
-
-    const data = await ffmpegInstance.readFile('final_dubbing.mp3') as Uint8Array;
-    return new Blob([data as BlobPart], { type: 'audio/mpeg' });
 }
 
 /**
@@ -236,43 +292,72 @@ export async function assembleAudio(
 ): Promise<Blob> {
     if (!ffmpegInstance) throw new Error('FFmpeg não carregado');
 
-    // Escrever áudio original
-    await ffmpegInstance.writeFile('original.mp3', await fetchFile(originalAudio));
+    try {
+        // Escrever áudio original
+        await ffmpegInstance.writeFile('original.mp3', await fetchFile(originalAudio));
 
-    // Escrever cada segmento dublado
-    for (let i = 0; i < dubbedSegments.length; i++) {
-        await ffmpegInstance.writeFile(`dub_${i}.mp3`, await fetchFile(dubbedSegments[i].blob));
+        // Escrever cada segmento dublado
+        for (let i = 0; i < dubbedSegments.length; i++) {
+            await ffmpegInstance.writeFile(`dub_${i}.mp3`, await fetchFile(dubbedSegments[i].blob));
+        }
+
+        // Construir filtro de mixagem complexo
+        let filterComplex = `[0:a]volume=0.3[orig];`; // Original em 30%
+
+        for (let i = 0; i < dubbedSegments.length; i++) {
+            const delay = Math.round(dubbedSegments[i].start * 1000); // ms
+            filterComplex += `[${i + 1}:a]adelay=${delay}|${delay}[dub${i}];`;
+        }
+
+        // Mixar tudo
+        const inputs = ['[orig]', ...dubbedSegments.map((_, i) => `[dub${i}]`)];
+        filterComplex += `${inputs.join('')}amix=inputs=${dubbedSegments.length + 1}:duration=longest[out]`;
+
+        const inputArgs: string[] = ['-i', 'original.mp3'];
+        for (let i = 0; i < dubbedSegments.length; i++) {
+            inputArgs.push('-i', `dub_${i}.mp3`);
+        }
+
+        await ffmpegInstance.exec([
+            ...inputArgs,
+            '-filter_complex', filterComplex,
+            '-map', '[out]',
+            '-ar', '44100',
+            '-ac', '2',
+            '-b:a', '192k',
+            'final.mp3'
+        ]);
+
+        const data = await ffmpegInstance.readFile('final.mp3') as Uint8Array;
+
+        // CRITICAL: Create a copy of the data to prevent memory access issues after cleanup
+        const dataCopy = new Uint8Array(data);
+
+        // Clean up all temporary files
+        try {
+            await ffmpegInstance.deleteFile('original.mp3');
+            for (let i = 0; i < dubbedSegments.length; i++) {
+                await ffmpegInstance.deleteFile(`dub_${i}.mp3`);
+            }
+            await ffmpegInstance.deleteFile('final.mp3');
+        } catch (e) {
+            console.warn('Failed to cleanup temp files in assembleAudio:', e);
+        }
+
+        return new Blob([dataCopy as BlobPart], { type: 'audio/mpeg' });
+    } catch (error) {
+        // Cleanup on error
+        try {
+            await ffmpegInstance.deleteFile('original.mp3').catch(() => { });
+            for (let i = 0; i < dubbedSegments.length; i++) {
+                await ffmpegInstance.deleteFile(`dub_${i}.mp3`).catch(() => { });
+            }
+            await ffmpegInstance.deleteFile('final.mp3').catch(() => { });
+        } catch (e) {
+            // Ignore cleanup errors
+        }
+        throw error;
     }
-
-    // Construir filtro de mixagem complexo
-    let filterComplex = `[0:a]volume=0.3[orig];`; // Original em 30%
-
-    for (let i = 0; i < dubbedSegments.length; i++) {
-        const delay = Math.round(dubbedSegments[i].start * 1000); // ms
-        filterComplex += `[${i + 1}:a]adelay=${delay}|${delay}[dub${i}];`;
-    }
-
-    // Mixar tudo
-    const inputs = ['[orig]', ...dubbedSegments.map((_, i) => `[dub${i}]`)];
-    filterComplex += `${inputs.join('')}amix=inputs=${dubbedSegments.length + 1}:duration=longest[out]`;
-
-    const inputArgs: string[] = ['-i', 'original.mp3'];
-    for (let i = 0; i < dubbedSegments.length; i++) {
-        inputArgs.push('-i', `dub_${i}.mp3`);
-    }
-
-    await ffmpegInstance.exec([
-        ...inputArgs,
-        '-filter_complex', filterComplex,
-        '-map', '[out]',
-        '-ar', '44100',
-        '-ac', '2',
-        '-b:a', '192k',
-        'final.mp3'
-    ]);
-
-    const data = await ffmpegInstance.readFile('final.mp3') as Uint8Array;
-    return new Blob([data as BlobPart], { type: 'audio/mpeg' });
 }
 
 /**

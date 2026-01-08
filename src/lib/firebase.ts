@@ -38,3 +38,4 @@ if (typeof window !== 'undefined' || firebaseConfig.apiKey) {
 
 export { auth, db };
 export default app;
+
