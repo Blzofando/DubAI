@@ -21,6 +21,9 @@ interface TimelineContainerProps {
     onToggleMuteOriginal: () => void;
     isTotalDubbingMuted: boolean;
     onToggleMuteDubbing: () => void;
+
+    // Filter
+    filteredSegmentIds?: Set<string>;
 }
 
 export default function TimelineContainer({
@@ -33,9 +36,12 @@ export default function TimelineContainer({
     isTotalOriginalMuted,
     onToggleMuteOriginal,
     isTotalDubbingMuted,
-    onToggleMuteDubbing
+    onToggleMuteDubbing,
+    filteredSegmentIds
 }: TimelineContainerProps) {
     const { translatedSegments, setTranslatedSegments, updateAudioSegmentTiming, transcriptSegments, applySpeedAdjustment, addToSpeedQueue, sourceFile, audioSegments } = useApp();
+
+    console.log('TimelineContainer render. Filtered IDs:', filteredSegmentIds?.size);
     const containerRef = useRef<HTMLDivElement>(null);
     const [zoom, setZoom] = useState(50); // pixels per second
 
@@ -376,26 +382,29 @@ export default function TimelineContainer({
                                     />
                                 </div>
 
-                                {transcriptSegments.map(seg => (
-                                    <SegmentBlock
-                                        key={seg.id}
-                                        id={seg.id}
-                                        text={seg.text}
-                                        start={seg.start}
-                                        duration={seg.end - seg.start}
-                                        zoom={zoom}
-                                        isSelected={selectedIds.has(seg.id)}
-                                        isOriginal={true}
-                                        onClick={(e) => {
-                                            e?.stopPropagation();
-                                            onMultiSelect(new Set([seg.id]), seg.id);
-                                            onSeek(seg.start);
-                                        }}
-                                        onDragStart={(e, id, x) => {
-                                            if (!selectedIds.has(id)) onMultiSelect(new Set([id]), id);
-                                        }}
-                                    />
-                                ))}
+                                {transcriptSegments.map(seg => {
+                                    if (filteredSegmentIds && !filteredSegmentIds.has(seg.id)) return null;
+                                    return (
+                                        <SegmentBlock
+                                            key={seg.id}
+                                            id={seg.id}
+                                            text={seg.text}
+                                            start={seg.start}
+                                            duration={seg.end - seg.start}
+                                            zoom={zoom}
+                                            isSelected={selectedIds.has(seg.id)}
+                                            isOriginal={true}
+                                            onClick={(e) => {
+                                                e?.stopPropagation();
+                                                onMultiSelect(new Set([seg.id]), seg.id);
+                                                onSeek(seg.start);
+                                            }}
+                                            onDragStart={(e, id, x) => {
+                                                if (!selectedIds.has(id)) onMultiSelect(new Set([id]), id);
+                                            }}
+                                        />
+                                    )
+                                })}
                             </div>
                             {/* Controls Original */}
                             <div className="absolute top-0 left-0 bottom-0 w-24 bg-gradient-to-r from-gray-900 to-transparent flex items-center pl-2 opacity-50 hover:opacity-100 transition-opacity z-10 pointer-events-none">
@@ -415,6 +424,8 @@ export default function TimelineContainer({
                         <div className="group relative pointer-events-auto">
                             <div className="h-24 bg-gray-800/30 rounded-lg relative border border-gray-700/50">
                                 {translatedSegments.map(seg => {
+                                    if (filteredSegmentIds && !filteredSegmentIds.has(seg.id)) return null;
+
                                     const isResizing = resizingId === seg.id;
                                     const isDragging = draggingId === seg.id || (draggingId && selectedIds.has(seg.id) && dragOriginalStarts.current.has(seg.id));
 

@@ -29,6 +29,16 @@ export default function HomePage({ onBackToProjects }: HomePageProps) {
         setCurrentView('long-dubbing');
     };
 
+    const handleStartDouyinDubbing = () => {
+        if (!hasApiKeys) {
+            if (confirm('Você precisa configurar as chaves de API primeiro. Ir para Configurações?')) {
+                setCurrentView('settings');
+            }
+            return;
+        }
+        setCurrentView('douyin-dubbing');
+    };
+
     const features = [
         {
             id: 'simple-dubbing',
@@ -47,6 +57,15 @@ export default function HomePage({ onBackToProjects }: HomePageProps) {
             gradient: 'from-purple-500 to-indigo-500',
             available: true,
             onClick: handleStartLongDubbing
+        },
+        {
+            id: 'douyin-dubbing',
+            title: 'Douyin Dub Slow',
+            description: 'Slow motion (0.8x), cliffhangers e divisão automática em partes',
+            icon: Sparkles,
+            gradient: 'from-purple-600 to-pink-600',
+            available: true,
+            onClick: handleStartDouyinDubbing
         },
         {
             id: 'advanced-dubbing',

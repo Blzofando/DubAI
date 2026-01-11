@@ -30,6 +30,11 @@ export async function loadFFmpeg(): Promise<void> {
 
     ffmpegInstance = new FFmpeg();
 
+    // Add logger
+    ffmpegInstance.on('log', ({ message }) => {
+        console.log('FFmpeg Log:', message);
+    });
+
     const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
 
     await ffmpegInstance.load({
@@ -141,6 +146,73 @@ export async function adjustAudioSpeed(
         throw new Error('Falha ao ajustar velocidade do áudio');
     }
 }
+
+
+/**
+ * Ajusta a velocidade do vídeo + áudio
+ * Fator < 1.0 = Slow Motion (duração aumenta)
+ */
+export async function adjustVideoSpeed(
+    videoFile: File,
+    speedFactor: number,
+    onProgress?: (message: string) => void
+): Promise<Blob> {
+    if (!ffmpegInstance) throw new Error('FFmpeg não carregado');
+    if (speedFactor <= 0) throw new Error('Speed factor deve ser > 0');
+
+    onProgress?.(`Ajustando velocidade do vídeo (${speedFactor}x)...`);
+
+    // setpts = 1/speedFactor (ex: 0.8x -> setpts=1.25)
+    // atempo = speedFactor (ex: 0.8)
+    const ptsFactor = (1 / speedFactor).toFixed(4);
+
+    // CRITICAL: Use unique filenames to prevent collisions
+    const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    const inputFile = `input_video_${uniqueId}.mp4`;
+    const outputFile = `output_slow_${uniqueId}.mp4`;
+
+    try {
+        await ffmpegInstance.writeFile(inputFile, await fetchFile(videoFile));
+
+        const ret = await ffmpegInstance.exec([
+            '-i', inputFile,
+            '-filter_complex', `[0:v]setpts=${ptsFactor}*PTS[v];[0:a]atempo=${speedFactor}[a]`,
+            '-map', '[v]',
+            '-map', '[a]',
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast', // Prioritize speed
+            '-crf', '28', // Lower quality is fine for preview/editing
+            '-c:a', 'aac',
+            '-b:a', '128k',
+            outputFile
+        ]);
+
+        const data = await ffmpegInstance.readFile(outputFile) as Uint8Array;
+        const dataCopy = new Uint8Array(data);
+
+        // Cleanup
+        try {
+            await ffmpegInstance.deleteFile(inputFile);
+            await ffmpegInstance.deleteFile(outputFile);
+        } catch (e) {
+            console.warn('Failed to cleanup temp files (adjustVideoSpeed):', e);
+        }
+
+        return new Blob([dataCopy as BlobPart], { type: 'video/mp4' });
+
+    } catch (error) {
+        // Cleanup on error
+        try {
+            await ffmpegInstance.deleteFile(inputFile).catch(() => { });
+            await ffmpegInstance.deleteFile(outputFile).catch(() => { });
+        } catch (e) { }
+        console.error('Erro ao ajustar velocidade do vídeo:', error);
+        throw new Error('Falha ao ajustar velocidade do vídeo');
+    }
+}
+
+/**
+ * Remove silêncio do início e fim do áudio
 
 /**
  * Remove silêncio do início e fim do áudio

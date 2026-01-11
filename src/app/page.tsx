@@ -12,6 +12,7 @@ import HomePage from '@/components/home/HomePage';
 import SettingsView from '@/components/settings/SettingsView';
 import SimpleDubbingView from '@/components/dubbing/SimpleDubbingView';
 import LongDubbingView from '@/components/dubbing/LongDubbingView';
+import DouyinDubbingView from '@/components/dubbing/DouyinDubbingView';
 import ProcessingView from '@/components/processing/ProcessingView';
 import EditorView from '@/components/editor/EditorView';
 
@@ -21,7 +22,8 @@ import { transcribeWithWhisper } from '@/services/whisper';
 import { translateWithOpenAI } from '@/services/openaiTranslation';
 import { generateSpeech } from '@/services/tts';
 import { generateSpeechBatch } from '@/services/batchTTS';
-import { extractAudio, assembleAudio, assembleDubbingOnly, loadFFmpeg, terminateFFmpeg, adjustAudioSpeed, removeSilence } from '@/services/ffmpeg';
+import { extractAudio, assembleAudio, assembleDubbingOnly, loadFFmpeg, terminateFFmpeg, adjustAudioSpeed, removeSilence, adjustVideoSpeed } from '@/services/ffmpeg';
+import { processDouyinSplits } from '@/services/cliffhanger';
 import { createProject, updateProject, uploadFile } from '@/services/projectService';
 
 import type { Project } from '@/types/project';
@@ -430,6 +432,158 @@ export default function MainPage() {
         }
     };
 
+    // Handler for Douyin Dub Slow
+    const handleProcessDouyinProject = async (skipSlow: boolean) => {
+        if (!hasApiKeys || !sourceFile || !user) return;
+
+        try {
+            setStage('processing');
+            setCurrentView('processing');
+            setProgress({ stage: 'processing', progress: 0, message: 'Iniciando modo Douyin...' });
+
+            await loadFFmpeg();
+
+            // 1. Video Processing (Slow Motion)
+            let processedVideoBlob: Blob | File = sourceFile;
+
+            if (!skipSlow) {
+                setProgress({ stage: 'processing', progress: 5, message: 'Aplicando Slow Motion (0.8x)...' });
+                try {
+                    processedVideoBlob = await adjustVideoSpeed(
+                        sourceFile,
+                        0.8,
+                        (msg: string) => setProgress({ stage: 'processing', progress: 10, message: msg })
+                    );
+                } catch (e: any) {
+                    console.error("Slow motion failed:", e);
+                    alert(`Falha ao aplicar slow motion: ${e.message || String(e)}. Tente um vídeo menor ou verifique se o vídeo tem áudio.`);
+                }
+            } else {
+                setProgress({ stage: 'processing', progress: 10, message: 'Pulando Slow Motion (vídeo já processado)...' });
+            }
+
+            // 2. Extract Audio
+            setProgress({ stage: 'processing', progress: 15, message: 'Extraindo áudio...' });
+            const audioBlob = await extractAudio(processedVideoBlob as File); // OK if Blob is passed as File often
+
+            // 3. Transcription
+            setProgress({ stage: 'processing', progress: 20, message: 'Transcrevendo...' });
+            let transcript;
+            if (transcriptionProvider === 'whisper') {
+                transcript = await transcribeWithWhisper(
+                    apiKeys.openai,
+                    audioBlob,
+                    (msg: string) => setProgress({ stage: 'processing', progress: 25, message: msg })
+                );
+            } else {
+                transcript = await transcribeAudio(
+                    apiKeys.gemini,
+                    audioBlob,
+                    (msg: string) => setProgress({ stage: 'processing', progress: 25, message: msg })
+                );
+            }
+            setTranscriptSegments(transcript);
+
+            // 4. Translation
+            setProgress({ stage: 'processing', progress: 40, message: 'Traduzindo...' });
+            let translated;
+            if (translationProvider === 'openai') {
+                translated = await translateWithOpenAI(
+                    apiKeys.openai,
+                    transcript
+                );
+            } else {
+                translated = await translateIsochronic(
+                    apiKeys.gemini,
+                    transcript
+                );
+            }
+            setTranslatedSegments(translated);
+
+            // 5. Cliffhanger / Split Logic
+            setProgress({ stage: 'processing', progress: 50, message: 'Criando ganchos e dividindo partes...' });
+
+            const totalDuration = await new Promise<number>((resolve) => {
+                const video = document.createElement('video');
+                video.onloadedmetadata = () => resolve(video.duration);
+                video.src = URL.createObjectURL(processedVideoBlob);
+            });
+
+            const parts = await processDouyinSplits(translated, totalDuration, apiKeys);
+            console.log("Douyin Parts Created:", parts);
+
+            // 6. TTS Generation (All segments in all parts)
+            // We need to flatten segments to generate audio for unique ones, then map back?
+            // Actually, cliffs modified checks in parts.
+            // Let's generate for ALL segments found in parts.
+            // Note: Some segments in Part 2 might be same as Transcript, but Part 1 might have modified text.
+
+            setProgress({ stage: 'processing', progress: 60, message: 'Gerando dublagem para todas as partes...' });
+
+            // Collect all unique segments to process
+            const allSegmentsToProcess: any[] = [];
+            parts.forEach(p => allSegmentsToProcess.push(...p.segments));
+
+            // Use Batch TTS
+            const processedSegments = await generateSpeechBatch(
+                allSegmentsToProcess,
+                selectedVoice,
+                { batchSize: 5, delayBetweenBatches: 200 },
+                (current, total, message) => {
+                    setProgress({
+                        stage: 'processing',
+                        progress: 60 + (current / total) * 30,
+                        message: `TTS das Partes: ${message}`
+                    });
+                }
+            );
+
+            setAudioSegments(processedSegments);
+
+            // 7. Save Project
+            setProgress({ stage: 'processing', progress: 95, message: 'Salvando projeto Douyin...' });
+
+            const projectId = await createProject({
+                name: projectName,
+                userId: user.uid,
+                sourceFileName: sourceFile.name,
+                transcriptSegments: transcript,
+                translatedSegments: translated, // Base translation
+                parts: parts // Save the split parts structure!
+            });
+
+            setCurrentProject({
+                id: projectId,
+                name: projectName,
+                userId: user.uid,
+                sourceFileName: sourceFile.name,
+                transcriptSegments: transcript,
+                translatedSegments: translated,
+                parts: parts,
+                duration: totalDuration,
+                selectedVoice: selectedVoice,
+                createdAt: new Date() as any,
+                updatedAt: new Date() as any
+            });
+
+            // Upload processed slow video if we made one?
+            // For now, assume local serving or upload original.
+            //Ideally upload processedVideoBlob. 
+            // await uploadFile(processedVideoBlob as File, `projects/${projectId}/source`);
+
+            setProgress(null);
+            setStage('editor');
+            setCurrentView('editor');
+
+        } catch (error: any) {
+            console.error('Douyin Process Error:', error);
+            alert(`Erro: ${error.message}`);
+            setStage('setup');
+            setCurrentView('douyin-dubbing');
+            setProgress(null);
+        }
+    };
+
     const handleNewProject = () => {
         setShowProjectList(false);
         setCurrentProject(null);
@@ -498,6 +652,14 @@ export default function MainPage() {
             {currentView === 'long-dubbing' && (
                 <LongDubbingView
                     onStart={handleProcessLongProject}
+                    projectName={projectName}
+                    onProjectNameChange={setProjectName}
+                    onBackToProjects={handleBackToProjects}
+                />
+            )}
+            {currentView === 'douyin-dubbing' && (
+                <DouyinDubbingView
+                    onStart={handleProcessDouyinProject}
                     projectName={projectName}
                     onProjectNameChange={setProjectName}
                     onBackToProjects={handleBackToProjects}

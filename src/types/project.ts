@@ -1,5 +1,5 @@
 import { Timestamp } from 'firebase/firestore';
-import type { TranscriptSegment, TranslatedSegment, AudioSegment } from './index';
+import type { TranscriptSegment, TranslatedSegment, AudioSegment, DubbingPart } from './index';
 
 export interface Project {
     id: string;
@@ -16,6 +16,7 @@ export interface Project {
     // Segments data
     transcriptSegments: TranscriptSegment[];
     translatedSegments: TranslatedSegment[];
+    parts?: DubbingPart[]; // Para projetos divididos (Douyin)
 
     // Metadata
     duration: number;
@@ -29,6 +30,7 @@ export interface CreateProjectData {
     sourceFileUrl?: string;
     transcriptSegments?: TranscriptSegment[];
     translatedSegments?: TranslatedSegment[];
+    parts?: DubbingPart[];
     duration?: number;
     selectedVoice?: string;
 }

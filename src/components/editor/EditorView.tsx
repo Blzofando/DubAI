@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { RotateCcw, Play, Pause, SkipBack, SkipForward, Upload, FileVideo, Save, Home, Zap, Volume2, VolumeX, Mic, MonitorPlay } from 'lucide-react';
+import { RotateCcw, Play, Pause, SkipBack, SkipForward, Upload, FileVideo, Save, Home, Zap, Volume2, VolumeX, Mic, MonitorPlay, Layers, Download } from 'lucide-react';
+import JSZip from 'jszip';
 import { useApp } from '@/contexts/AppContext';
 import TimelineContainer from './Timeline/TimelineContainer';
 import Inspector from './Inspector/Inspector';
@@ -27,6 +28,14 @@ export default function EditorView() {
     } = useApp();
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+    const [activePartIndex, setActivePartIndex] = useState<number | null>(null); // null = show all or no parts
+
+    // Initialize active part if project has parts
+    useEffect(() => {
+        if (currentProject?.parts && currentProject.parts.length > 0) {
+            setActivePartIndex(1);
+        }
+    }, [currentProject]);
 
     const {
         videoRef,
@@ -174,28 +183,84 @@ export default function EditorView() {
             const { assembleDubbingOnly, loadFFmpeg } = await import('@/services/ffmpeg');
             await loadFFmpeg();
 
-            const maxDuration = Math.max(duration, ...audioSegments.map(s => s.startTime + s.duration));
-            const dubbedSegments = audioSegments.map(seg => ({
-                blob: seg.audioBlob,
-                start: seg.startTime
-            }));
+            // Check if we need to export parts (Douyin Mode)
+            if (currentProject?.parts && currentProject.parts.length > 0) {
+                const zip = new JSZip();
+                const parts = currentProject.parts;
+                let cutsGuide = "DOUYIN DUB SLOW - GUIA DE CORTE\n\n";
 
-            const finalBlob = await assembleDubbingOnly(dubbedSegments, maxDuration);
-            setFinalAudioBlob(finalBlob);
+                for (const part of parts) {
+                    // Filter segments for this part
+                    // Note: audioSegments should contain all generated audios with correct IDs
+                    const partSegmentIds = new Set(part.segments.map(s => s.id));
+                    const partAudioSegments = audioSegments.filter(s => partSegmentIds.has(s.id));
 
-            const url = URL.createObjectURL(finalBlob);
-            const a = document.createElement('a');
-            a.href = url;
-            const safeName = currentProject?.name ? currentProject.name.trim().replace(/[^a-zA-Z0-9\-_ ]/g, '_') : 'dubai-export';
-            a.download = `${safeName}.mp3`;
-            a.click();
-            URL.revokeObjectURL(url);
-        } catch (error) {
+                    if (partAudioSegments.length === 0) continue;
+
+                    // Calculate duration relative to part start? 
+                    // No, assembleDubbingOnly expects absolute times? 
+                    // Actually assembleDubbingOnly takes { blob, start }. Start is absolute.
+                    // If we want the output audio to start at 00:00 relative to the part start, we must subtract part.start.
+
+                    const relativeSegments = partAudioSegments.map(seg => ({
+                        blob: seg.audioBlob,
+                        start: seg.startTime - part.start // Shift to 0
+                    }));
+
+                    const partDuration = part.end - part.start;
+
+                    const partBlob = await assembleDubbingOnly(relativeSegments, partDuration);
+                    zip.file(`Parte_${part.index}.mp3`, partBlob);
+
+                    // Add to guide
+                    const startCode = formatTimeCode(part.start);
+                    const endCode = formatTimeCode(part.end);
+                    cutsGuide += `Parte ${part.index}: ${startCode} -> ${endCode}\n`;
+                }
+
+                zip.file("cortes_guide.txt", cutsGuide);
+
+                const content = await zip.generateAsync({ type: "blob" });
+                const url = URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${currentProject.name}_douyin_pack.zip`;
+                a.click();
+                URL.revokeObjectURL(url);
+
+            } else {
+                // Standard Export
+                const maxDuration = Math.max(duration, ...audioSegments.map(s => s.startTime + s.duration));
+                const dubbedSegments = audioSegments.map(seg => ({
+                    blob: seg.audioBlob,
+                    start: seg.startTime
+                }));
+
+                const finalBlob = await assembleDubbingOnly(dubbedSegments, maxDuration);
+                setFinalAudioBlob(finalBlob);
+
+                const url = URL.createObjectURL(finalBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                const safeName = currentProject?.name ? currentProject.name.trim().replace(/[^a-zA-Z0-9\-_ ]/g, '_') : 'dubai-export';
+                a.download = `${safeName}.mp3`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        } catch (error: any) {
             console.error(error);
-            alert('Erro na exportação');
+            alert('Erro na exportação: ' + error.message);
         } finally {
             setIsExporting(false);
         }
+    };
+
+    const formatTimeCode = (seconds: number) => {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        const ms = Math.floor((seconds % 1) * 1000);
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`;
     };
 
     const handleSave = async () => {
@@ -341,7 +406,31 @@ export default function EditorView() {
             </div>
 
             {/* 2. Main Content Area (Full Inspector or Zero State) */}
-            <div className="flex-1 overflow-hidden p-4 sm:p-6 relative">
+            <div className="flex-1 overflow-hidden p-4 sm:p-6 relative flex flex-col">
+                {/* Parts Tabs (Douyin Mode) */}
+                {currentProject?.parts && currentProject.parts.length > 0 && (
+                    <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-2 shrink-0">
+                        {currentProject.parts.map((part) => (
+                            <button
+                                key={part.index}
+                                onClick={() => {
+                                    setActivePartIndex(part.index);
+                                    seek(part.start); // Auto seek to start of part
+                                    setSelectedIds(new Set()); // Clear selection
+                                    setLastSelectedId(null);
+                                }}
+                                className={`px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition-all whitespace-nowrap ${activePartIndex === part.index
+                                    ? 'bg-purple-600 text-white shadow-md'
+                                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'
+                                    }`}
+                            >
+                                <Layers size={14} />
+                                Parte {part.index}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
                 {/* Hidden Video Element for Logic */}
                 {sourceFile && (
                     <video
@@ -468,6 +557,11 @@ export default function EditorView() {
                     onToggleMuteOriginal={() => setIsOriginalMuted(!isOriginalMuted)}
                     isTotalDubbingMuted={isDubbingMuted}
                     onToggleMuteDubbing={() => setIsDubbingMuted(!isDubbingMuted)}
+                    filteredSegmentIds={
+                        activePartIndex
+                            ? new Set(currentProject?.parts?.find(p => p.index === activePartIndex)?.segments.map(s => s.id))
+                            : undefined
+                    }
                 />
             </div>
         </div>

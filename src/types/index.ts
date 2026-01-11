@@ -27,6 +27,14 @@ export interface AudioSegment {
     appliedSpeedFactor?: number; // fator de velocidade aplicado pelo FFmpeg
 }
 
+// Parte de uma dublagem dividida (Douyin Slow)
+export interface DubbingPart {
+    index: number; // 1, 2, 3...
+    start: number; // Tempo de vídeo onde essa parte começa
+    end: number; // Tempo de vídeo onde essa parte termina
+    segments: TranslatedSegment[];
+}
+
 // Estágios do pipeline
 export type ProcessingStage =
     | 'setup'
@@ -39,6 +47,8 @@ export type CurrentView =
     | 'settings'
     | 'dubbing'
     | 'long-dubbing'
+    | 'douyin-dubbing'
+    | 'processing'
     | 'processing'
     | 'editor';
 

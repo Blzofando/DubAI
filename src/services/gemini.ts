@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { TranscriptSegment, TranslatedSegment } from '@/types';
 
-const MODEL_NAME = 'gemini-2.5-flash';
+const MODEL_NAME = 'gemini-3-pro-preview';
 
 /**
  * Transcreve áudio e retorna segmentos com timestamps
@@ -115,25 +115,29 @@ EXEMPLO:
         }
 
         return validSegments;
-        return segments;
     } catch (parseError: any) {
         console.error('Erro ao fazer parse do JSON:', parseError.message);
-        console.error('JSON recebido:', jsonText.substring(0, 500) + '...');
 
-        // Tentar limpar o JSON (remover quebras de linha e aspas não escapadas)
+        // Tentar limpar o JSON de forma agressiva
         try {
-            // Substituir quebras de linha por espaços dentro de strings
+            // 1. Remove caracteres de controle (0x00-0x1F) exceto os permitidos em JSON se escapados, 
+            // mas aqui queremos remover os LITERAIS que quebram o parse.
+            // Substitui newlines/tabs literais por espaço simples
             const cleanedJson = jsonText
-                .replace(/\n/g, ' ')
-                .replace(/\r/g, '')
-                .replace(/\t/g, ' ');
+                .replace(/[\x00-\x1F\x7F-\x9F]/g, (char) => {
+                    // Preservar, talvez? Não, JSON não permite unescaped control chars.
+                    // Vamos substituir por espaço se for whitespace-like, ou vazio.
+                    if (char === '\n' || char === '\r' || char === '\t') return ' ';
+                    return '';
+                });
 
             const segments: TranscriptSegment[] = JSON.parse(cleanedJson);
-            console.log('✅ Parse bem-sucedido após limpeza');
+            console.log('✅ Parse bem-sucedido após limpeza agressiva');
             return segments;
         } catch (secondError) {
             console.error('❌ Parse falhou mesmo após limpeza');
-            throw new Error(`JSON inválido do Gemini: ${parseError.message}. Tente novamente.`);
+            console.error('JSON Problemático:', jsonText.substring(0, 200) + '...');
+            throw new Error(`JSON inválido do Gemini: ${parseError.message}. O modelo retornou caracteres inválidos.`);
         }
     }
 }
