@@ -270,6 +270,59 @@ FORMATO DE RESPOSTA (apenas o JSON):
 }
 
 /**
+ * Reescreve o texto para se ajustar melhor à duração alvo
+ * Se audioDuration > targetDuration (speed > 1), precisamos encurtar o texto.
+ * Se audioDuration < targetDuration (speed < 1), precisamos alongar o texto.
+ */
+export async function rewriteTextForDuration(
+    apiKey: string,
+    currentText: string,
+    currentDuration: number,
+    targetDuration: number,
+    currentSpeed: number
+): Promise<string> {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: MODEL_NAME });
+
+    const needsShortening = currentSpeed > 1.0;
+    const action = needsShortening ? 'ENCURTAR' : 'ALONGAR';
+
+    // Estimativa grosseira de chars alvo
+    const currentChars = currentText.length;
+    // Se speed é 1.5x, o texto é 1.5x muito longo, então divider por 1.5 (ou multiplicar por 2/3)
+    // Se speed é 0.8x, o texto é 0.8x do tamanho ideal, então dividir por 0.8 (multiplicar por 1.25)
+    // Vamos ser um pouco conservadores
+    const targetChars = Math.round(currentChars / currentSpeed);
+
+    const prompt = `Reescreva o seguinte texto para dublagem, com o objetivo de ${action} o tempo de fala.
+    
+    Texto Original: "${currentText}"
+    
+    Duração Atual do Áudio: ${currentDuration.toFixed(2)}s
+    Duração Alvo do Slot: ${targetDuration.toFixed(2)}s
+    Velocidade Atual Necessária: ${currentSpeed.toFixed(2)}x (Ideal é 1.0x)
+    
+    AÇÃO NECESSÁRIA: ${action} o texto.
+    Meta aproximada de caracteres: ${targetChars} (Original: ${currentChars})
+    
+    REGRAS:
+    1. Mantenha o MESMO significado e contexto.
+    2. Seja natural para fala.
+    3. ${needsShortening ? 'Seja mais conciso, corte palavras desnecessárias.' : 'Seja mais descritivo, use sinônimos mais longos ou conectivos para preencher o tempo naturalamente.'}
+    4. Retorne APENAS o novo texto, sem aspas, sem explicações.`;
+
+    try {
+        const result = await model.generateContent(prompt);
+        const newText = result.response.text().trim();
+        // Remove aspas se o modelo colocou
+        return newText.replace(/^["']|["']$/g, '');
+    } catch (error) {
+        console.error('Erro no rewriteTextForDuration:', error);
+        return currentText; // Fallback para original
+    }
+}
+
+/**
  * Envia um prompt de chat para o Gemini (para o Assistente de Tradução)
  */
 export async function chatWithAi(apiKey: string, prompt: string): Promise<string> {

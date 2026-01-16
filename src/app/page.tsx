@@ -13,6 +13,7 @@ import SettingsView from '@/components/settings/SettingsView';
 import SimpleDubbingView from '@/components/dubbing/SimpleDubbingView';
 import LongDubbingView from '@/components/dubbing/LongDubbingView';
 import DouyinDubbingView from '@/components/dubbing/DouyinDubbingView';
+import SrtDubbingView from '@/components/dubbing/SrtDubbingView';
 import ProcessingView from '@/components/processing/ProcessingView';
 import EditorView from '@/components/editor/EditorView';
 
@@ -664,6 +665,9 @@ export default function MainPage() {
                     onProjectNameChange={setProjectName}
                     onBackToProjects={handleBackToProjects}
                 />
+            )}
+            {currentView === 'srt-dubbing' && (
+                <SrtDubbingView onBack={() => setCurrentView('home')} />
             )}
             {(currentView === 'processing' || stage === 'processing') && <ProcessingView />}
             {(currentView === 'editor' || stage === 'editor') && <EditorView />}

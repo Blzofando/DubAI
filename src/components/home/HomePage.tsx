@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '@/contexts/AppContext';
-import { Video, Settings, Lock, Sparkles, ChevronRight, FolderOpen, Zap } from 'lucide-react';
+import { Video, Settings, Lock, Sparkles, ChevronRight, FolderOpen, Zap, FileText } from 'lucide-react';
 
 interface HomePageProps {
     onBackToProjects: () => void;
@@ -39,6 +39,16 @@ export default function HomePage({ onBackToProjects }: HomePageProps) {
         setCurrentView('douyin-dubbing');
     };
 
+    const handleStartSrtDubbing = () => {
+        if (!hasApiKeys) {
+            if (confirm('Você precisa configurar as chaves de API primeiro. Ir para Configurações?')) {
+                setCurrentView('settings');
+            }
+            return;
+        }
+        setCurrentView('srt-dubbing');
+    };
+
     const features = [
         {
             id: 'simple-dubbing',
@@ -66,6 +76,15 @@ export default function HomePage({ onBackToProjects }: HomePageProps) {
             gradient: 'from-purple-600 to-pink-600',
             available: true,
             onClick: handleStartDouyinDubbing
+        },
+        {
+            id: 'srt-dubbing',
+            title: 'Dublagem por SRT',
+            description: 'Upload de legendas, ajuste inteligente de duração com reescrita via IA',
+            icon: FileText,
+            gradient: 'from-green-500 to-emerald-500',
+            available: true,
+            onClick: handleStartSrtDubbing
         },
         {
             id: 'advanced-dubbing',

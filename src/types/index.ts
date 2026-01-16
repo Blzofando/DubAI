@@ -48,7 +48,7 @@ export type CurrentView =
     | 'dubbing'
     | 'long-dubbing'
     | 'douyin-dubbing'
-    | 'processing'
+    | 'srt-dubbing'
     | 'processing'
     | 'editor';
 
