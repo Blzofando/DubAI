@@ -108,7 +108,8 @@ export default function SrtDubbingView({ onBack }: { onBack: () => void }) {
                     currentSeg.currentText,
                     currentSeg.duration!,
                     targetDuration,
-                    currentSeg.speedFactor!
+                    currentSeg.speedFactor!,
+                    1.2 // Target Speed: 1.2x (to be safe > 1.1)
                 );
                 currentSeg.currentText = newText;
 
@@ -140,7 +141,8 @@ export default function SrtDubbingView({ onBack }: { onBack: () => void }) {
                     currentSeg.speedFactor = speedFactor;
 
                     // Check if fixed
-                    if (speedFactor >= 1.0 && speedFactor <= 1.5) {
+                    // Changed: Accept ONLY if speedFactor >= 1.1 (and <= 1.5 to avoid too fast)
+                    if (speedFactor >= 1.1 && speedFactor <= 1.5) {
                         currentSeg.status = 'completed';
                         currentSeg.message = `Corrigido (${speedFactor.toFixed(2)}x)`;
                         currentSeg.needsFix = false;

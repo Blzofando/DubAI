@@ -279,36 +279,60 @@ export async function rewriteTextForDuration(
     currentText: string,
     currentDuration: number,
     targetDuration: number,
-    currentSpeed: number
+    currentSpeed: number,
+    targetSpeed: number = 1.0
 ): Promise<string> {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: MODEL_NAME });
 
-    const needsShortening = currentSpeed > 1.0;
-    const action = needsShortening ? 'ENCURTAR' : 'ALONGAR';
+    // Se targetSpeed for 1.2, queremos que o texto seja encurtado para caber em (targetDuration / 1.2)
+    // Basicamente, forçamos o texto a ser menor para que o audio precise ser acelerado (speed > 1).
 
-    // Estimativa grosseira de chars alvo
-    const currentChars = currentText.length;
-    // Se speed é 1.5x, o texto é 1.5x muito longo, então divider por 1.5 (ou multiplicar por 2/3)
-    // Se speed é 0.8x, o texto é 0.8x do tamanho ideal, então dividir por 0.8 (multiplicar por 1.25)
-    // Vamos ser um pouco conservadores
-    const targetChars = Math.round(currentChars / currentSpeed);
+    // Comparação correta:
+    // Se o currentSpeed > targetSpeed, precisamos encurtar mais.
+    // Se o currentSpeed < targetSpeed, precisamos alongar (ou encurtar menos).
 
-    const prompt = `Reescreva o seguinte texto para dublagem, com o objetivo de ${action} o tempo de fala.
+    // Vamos simplificar: O objetivo é que o NOVO texto, quando falado na velocidade normal,
+    // tenha uma duração aproximada de "targetDuration * targetSpeed" (se speed fosse < 1) ???
+    // NÃO.
+    // Speed = AudioDuration / TargetDuration.
+    // Queremos que o Speed final seja aprox targetSpeed.
+    // Logo, AudioDurationFinal ~= TargetDuration * targetSpeed.
+
+    // Ex: TargetDuration = 10s. TargetSpeed = 1.2x.
+    // AudioDurationFinal deve ser 12s. (Assim 12 / 10 = 1.2x).
+
+    // Então, ao estimar caracteres:
+    // currentChars gera currentDuration.
+    // targetChars deve gerar (TargetDuration * targetSpeed).
+
+    // Proporção: targetChars = (TargetDuration * targetSpeed) * (currentChars / currentDuration)
+
+    // Ajuste grosseiro
+    const charsPerSecond = currentDuration > 0 ? (currentText.length / currentDuration) : 15;
+    const idealDuration = targetDuration * targetSpeed;
+    const targetChars = Math.round(idealDuration * charsPerSecond);
+
+    const action = targetChars < currentText.length ? 'ENCURTAR' : 'ALONGAR';
+
+    const prompt = `Reescreva o seguinte texto para dublagem.
     
     Texto Original: "${currentText}"
     
     Duração Atual do Áudio: ${currentDuration.toFixed(2)}s
     Duração Alvo do Slot: ${targetDuration.toFixed(2)}s
-    Velocidade Atual Necessária: ${currentSpeed.toFixed(2)}x (Ideal é 1.0x)
+    Velocidade Atual: ${currentSpeed.toFixed(2)}x
     
-    AÇÃO NECESSÁRIA: ${action} o texto.
-    Meta aproximada de caracteres: ${targetChars} (Original: ${currentChars})
+    OBJETIVO: O texto deve ser reescrito para que, ao ser falado, gere um áudio de aproximadamente ${idealDuration.toFixed(2)}s.
+    Isso resultará em uma velocidade de aceleração de ~${targetSpeed.toFixed(2)}x quando ajustado para o slot de ${targetDuration.toFixed(2)}s.
+    
+    AÇÃO: ${action} o texto.
+    Meta aproximada de caracteres: ${targetChars} (Original: ${currentText.length})
     
     REGRAS:
     1. Mantenha o MESMO significado e contexto.
     2. Seja natural para fala.
-    3. ${needsShortening ? 'Seja mais conciso, corte palavras desnecessárias.' : 'Seja mais descritivo, use sinônimos mais longos ou conectivos para preencher o tempo naturalamente.'}
+    3. ${action === 'ENCURTAR' ? 'Seja mais conciso, corte palavras menos importantes.' : 'Seja mais descritivo, use sinônimos ou conectivos para preencher o tempo.'}
     4. Retorne APENAS o novo texto, sem aspas, sem explicações.`;
 
     try {
