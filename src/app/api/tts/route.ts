@@ -10,7 +10,7 @@ export const maxDuration = 300;
  * Generates audio using the installed python 'edge-tts' CLI.
  * This is used because the Node.js library is currently blocked/buggy.
  */
-async function generateAudioPython(text: string, voice: string): Promise<Uint8Array> {
+async function generateAudioPython(text: string, voice: string): Promise<Buffer> {
     const tempFile = path.join(os.tmpdir(), `tts-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`);
 
     return new Promise((resolve, reject) => {
@@ -45,7 +45,7 @@ async function generateAudioPython(text: string, voice: string): Promise<Uint8Ar
                     const audioBuffer = fs.readFileSync(tempFile);
                     fs.unlinkSync(tempFile); // Clean up
                     console.log(`[TTS-PY] Success. Size: ${audioBuffer.length} bytes`);
-                    resolve(new Uint8Array(audioBuffer));
+                    resolve(audioBuffer);
                 } else {
                     reject(new Error('Output file was not created by edge-tts'));
                 }
@@ -68,8 +68,10 @@ export async function GET(req: NextRequest) {
 
     try {
         const audioData = await generateAudioPython(text, voice);
+        // Create a fresh ArrayBuffer copy to ensure proper TypeScript compatibility with Next.js 15
+        const arrayBuffer = audioData.buffer.slice(audioData.byteOffset, audioData.byteOffset + audioData.byteLength) as ArrayBuffer;
 
-        return new NextResponse(audioData, {
+        return new NextResponse(arrayBuffer, {
             headers: { 'Content-Type': 'audio/mpeg' }
         });
     } catch (err: any) {
@@ -109,7 +111,9 @@ export async function POST(req: NextRequest) {
 
         console.log(`[TTS-API] Success in ${duration}ms. Size: ${audioData.length} bytes.`);
 
-        return new NextResponse(audioData, {
+        // Create a fresh ArrayBuffer copy to ensure proper TypeScript compatibility with Next.js 15
+        const arrayBuffer = audioData.buffer.slice(audioData.byteOffset, audioData.byteOffset + audioData.byteLength) as ArrayBuffer;
+        return new NextResponse(arrayBuffer, {
             headers: {
                 'Content-Type': 'audio/mpeg',
                 'Content-Length': audioData.length.toString(),
