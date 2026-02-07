@@ -49,6 +49,16 @@ export default function HomePage({ onBackToProjects }: HomePageProps) {
         setCurrentView('srt-dubbing');
     };
 
+    const handleStartAdvancedDubbing = () => {
+        if (!hasApiKeys) {
+            if (confirm('Você precisa configurar as chaves de API primeiro. Ir para Configurações?')) {
+                setCurrentView('settings');
+            }
+            return;
+        }
+        setCurrentView('advanced-dubbing');
+    };
+
     const features = [
         {
             id: 'simple-dubbing',
@@ -92,8 +102,9 @@ export default function HomePage({ onBackToProjects }: HomePageProps) {
             description: 'Controle fino sobre timing e múltiplas vozes',
             icon: Sparkles,
             gradient: 'from-pink-500 to-rose-500',
-            available: false,
-            comingSoon: true
+            available: true,
+            comingSoon: false,
+            onClick: handleStartAdvancedDubbing
         },
         {
             id: 'batch-processing',

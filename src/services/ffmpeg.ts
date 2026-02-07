@@ -168,46 +168,87 @@ export async function adjustVideoSpeed(
 
     // CRITICAL: Use unique filenames to prevent collisions
     const uniqueId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
-    const inputFile = `input_video_${uniqueId}.mp4`;
+    const mountDir = '/mnt';
+    const safeFileName = `input_${uniqueId}.mp4`;
+    // Create a new file object with a safe name to ensure WORKERFS handles it predictably
+    const mountedFile = new File([videoFile], safeFileName, { type: videoFile.type });
+    const inputPath = `${mountDir}/${safeFileName}`;
     const outputFile = `output_slow_${uniqueId}.mp4`;
 
     try {
-        await ffmpegInstance.writeFile(inputFile, await fetchFile(videoFile));
+        console.log(`[FFmpeg] adjustVideoSpeed: Using WORKERFS mount for file ${safeFileName} (Size: ${videoFile.size})`);
+        console.log(`[FFmpeg] Environment: crossOriginIsolated=${window.crossOriginIsolated}`);
+
+        // 1. Create mount dir if needed
+        try {
+            await ffmpegInstance.createDir(mountDir);
+        } catch (e: any) {
+            // Ignore if exists (EEXIST)
+            if (e.code !== 'EEXIST' && e.errno !== 17) {
+                console.warn('[FFmpeg] Failed to create mount dir:', e);
+            }
+        }
+
+        // 2. Mount file
+        // WORKERFS allows reading File/Blob without copying to memory
+        await ffmpegInstance.mount('WORKERFS' as any, { files: [mountedFile] }, mountDir);
+        console.log('[FFmpeg] File mounted successfully at ' + inputPath);
+
+        // 3. Exec
+        console.log('[FFmpeg] Starting execution (with 720p scale to save memory)...');
+        // We add scale filter to safe memory: scale='min(1280,iw):-2'
+        // Complex filter chains need semicolon separators if simple, but here we mix graphs?
+        // [0:v]setpts=...[v1];[v1]scale=...[v2]
+
+        const filterComplex = `[0:v]setpts=${ptsFactor}*PTS[v1];[v1]scale='min(1280,iw)':-2[v];[0:a]atempo=${speedFactor}[a]`;
 
         const ret = await ffmpegInstance.exec([
-            '-i', inputFile,
-            '-filter_complex', `[0:v]setpts=${ptsFactor}*PTS[v];[0:a]atempo=${speedFactor}[a]`,
+            '-i', inputPath,
+            '-filter_complex', filterComplex,
             '-map', '[v]',
             '-map', '[a]',
             '-c:v', 'libx264',
-            '-preset', 'ultrafast', // Prioritize speed
-            '-crf', '28', // Lower quality is fine for preview/editing
+            '-preset', 'ultrafast',
+            '-crf', '30', // Increase compression to 30 to save space
             '-c:a', 'aac',
-            '-b:a', '128k',
+            '-b:a', '96k', // Reduce audio bitrate slightly
             outputFile
         ]);
 
+        console.log('[FFmpeg] Execution finished, reading output...');
         const data = await ffmpegInstance.readFile(outputFile) as Uint8Array;
         const dataCopy = new Uint8Array(data);
 
         // Cleanup
         try {
-            await ffmpegInstance.deleteFile(inputFile);
+            await ffmpegInstance.unmount(mountDir);
             await ffmpegInstance.deleteFile(outputFile);
         } catch (e) {
             console.warn('Failed to cleanup temp files (adjustVideoSpeed):', e);
         }
 
+        console.log('[FFmpeg] Process complete.');
         return new Blob([dataCopy as BlobPart], { type: 'video/mp4' });
 
-    } catch (error) {
+    } catch (error: any) {
         // Cleanup on error
         try {
-            await ffmpegInstance.deleteFile(inputFile).catch(() => { });
+            await ffmpegInstance.unmount(mountDir).catch(() => { });
             await ffmpegInstance.deleteFile(outputFile).catch(() => { });
         } catch (e) { }
+
+        // Detailed error logging
         console.error('Erro ao ajustar velocidade do vídeo:', error);
-        throw new Error('Falha ao ajustar velocidade do vídeo');
+        if (error && typeof error === 'object') {
+            console.error('Error details:', {
+                name: error.name,
+                message: error.message,
+                errno: error.errno,
+                code: error.code
+            });
+        }
+
+        throw new Error(`Falha ao ajustar velocidade do vídeo: ${error.message || 'Erro desconhecido'}`);
     }
 }
 

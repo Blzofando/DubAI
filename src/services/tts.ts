@@ -6,7 +6,7 @@ export async function generateSpeech(
 ): Promise<Blob> {
     // Create abort controller with 60s timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 segundos
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutos
 
     try {
         const response = await fetch('/api/tts', {

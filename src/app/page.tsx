@@ -16,6 +16,7 @@ import DouyinDubbingView from '@/components/dubbing/DouyinDubbingView';
 import SrtDubbingView from '@/components/dubbing/SrtDubbingView';
 import ProcessingView from '@/components/processing/ProcessingView';
 import EditorView from '@/components/editor/EditorView';
+import AdvancedDubbingView from '@/components/dubbing/AdvancedDubbingView';
 
 // Services
 import { translateIsochronic, transcribeAudio } from '@/services/gemini';
@@ -23,8 +24,9 @@ import { transcribeWithWhisper } from '@/services/whisper';
 import { translateWithOpenAI } from '@/services/openaiTranslation';
 import { generateSpeech } from '@/services/tts';
 import { generateSpeechBatch } from '@/services/batchTTS';
-import { extractAudio, assembleAudio, assembleDubbingOnly, loadFFmpeg, terminateFFmpeg, adjustAudioSpeed, removeSilence, adjustVideoSpeed } from '@/services/ffmpeg';
+import { extractAudio, assembleAudio, assembleDubbingOnly, loadFFmpeg, terminateFFmpeg, adjustAudioSpeed, removeSilence, adjustVideoSpeed, getAudioDuration } from '@/services/ffmpeg';
 import { processDouyinSplits } from '@/services/cliffhanger';
+import { refineTextWithAI } from '@/services/textRefinement';
 import { createProject, updateProject, uploadFile } from '@/services/projectService';
 
 import type { Project } from '@/types/project';
@@ -585,6 +587,294 @@ export default function MainPage() {
         }
     };
 
+
+    // Handler for Advanced Dubbing (0.9x + Iterative Refinement)
+    const handleProcessAdvancedProject = async () => {
+        if (!hasApiKeys || !sourceFile || !user) return;
+
+        try {
+            setStage('processing');
+            setCurrentView('processing');
+            setProgress({ stage: 'processing', progress: 0, message: 'Iniciando modo Avançado...' });
+
+            await loadFFmpeg();
+
+            // 1. Apply 0.9x Speed to Video (Create "Canvas")
+            setProgress({ stage: 'processing', progress: 5, message: 'Criando base temporal (0.9x)...' });
+
+            let processedVideoBlob: Blob;
+            try {
+                processedVideoBlob = await adjustVideoSpeed(
+                    sourceFile,
+                    0.9,
+                    (msg: string) => setProgress({ stage: 'processing', progress: 8, message: msg })
+                );
+            } catch (e: any) {
+                console.error("Slow motion failed... continuing with original speed:", e);
+                // Non-blocking alert
+                // alert(`Falha ao aplicar slow motion (0.9x). Continuando com velocidade original...\nErro: ${e.message}`);
+
+                // Fallback: Use original file
+                processedVideoBlob = sourceFile;
+            }
+
+            // 2. Extract Audio from Slowed Video
+            setProgress({ stage: 'processing', progress: 15, message: 'Extraindo áudio da base...' });
+            // Note: extractAudio expects File, but Blob works in most browser contexts if casted, 
+            // or we need to wrap it. adjustVideoSpeed returns Blob.
+            const audioBlob = await extractAudio(new File([processedVideoBlob], 'slowedy.mp4', { type: 'video/mp4' }));
+
+            // 3. Transcription
+            setProgress({ stage: 'processing', progress: 20, message: 'Transcrevendo...' });
+            let transcript;
+            if (transcriptionProvider === 'whisper') {
+                transcript = await transcribeWithWhisper(
+                    apiKeys.openai,
+                    audioBlob,
+                    (msg: string) => setProgress({ stage: 'processing', progress: 25, message: msg })
+                );
+            } else {
+                transcript = await transcribeAudio(
+                    apiKeys.gemini,
+                    audioBlob,
+                    (msg: string) => setProgress({ stage: 'processing', progress: 25, message: msg })
+                );
+            }
+            setTranscriptSegments(transcript);
+
+            // 4. Translation
+            setProgress({ stage: 'processing', progress: 35, message: 'Traduzindo...' });
+            let translated;
+            if (translationProvider === 'openai') {
+                translated = await translateWithOpenAI(
+                    apiKeys.openai,
+                    transcript
+                );
+            } else {
+                translated = await translateIsochronic(
+                    apiKeys.gemini,
+                    transcript
+                );
+            }
+            setTranslatedSegments(translated);
+
+            // 5. Iterative Refinement Loop
+            setProgress({ stage: 'processing', progress: 50, message: 'Refinando dublagem (Loop IA)...' });
+
+            const processedSegments: AudioSegment[] = [];
+            const MAX_ATTEMPTS = 4;
+
+            for (let i = 0; i < translated.length; i++) {
+                const seg = translated[i];
+                let currentText = seg.translatedText;
+                let bestBlob: Blob | null = null;
+                let bestDuration = 0;
+                let bestSpeedFactor = 0; // The calculated speed needed
+                let attempts = 0;
+                let success = false;
+                let warning = false;
+
+                const targetDuration = seg.end - seg.start;
+
+                while (attempts < MAX_ATTEMPTS && !success) {
+                    attempts++;
+                    const progressBase = 50 + (i / translated.length) * 40;
+                    setProgress({
+                        stage: 'processing',
+                        progress: progressBase,
+                        message: `Segmento ${i + 1}/${translated.length} (Tentativa ${attempts}/${MAX_ATTEMPTS})...`
+                    });
+
+                    // A. Generate TTS
+                    if (!currentText || !currentText.trim()) {
+                        console.warn(`Seg ${i + 1}: Empty text, skipping TTS generation.`);
+                        currentText = "..."; // Placeholder to prevent crash
+                    }
+                    let audioBlob = await generateSpeech(currentText, selectedVoice);
+
+                    // B. Remove Silence
+                    try {
+                        audioBlob = await removeSilence(audioBlob);
+                    } catch (e) {
+                        console.warn("Silence removal failed, using raw", e);
+                    }
+
+                    // C. Measure Duration
+                    const duration = await getAudioDuration(audioBlob);
+
+                    // D. Calculate Speed Factor needed to fit target
+                    // If audio is 10s and target is 5s, we need 2.0x speed.
+                    // speedFactor = duration / targetDuration
+                    const speedFactor = duration / targetDuration;
+
+                    console.log(`Seg ${i + 1} Attempt ${attempts}: dur=${duration.toFixed(2)}s target=${targetDuration.toFixed(2)}s speed=${speedFactor.toFixed(2)}x`);
+
+                    // Store as candidate (always keep the latest or best?)
+                    // Let's keep the latest for now as "best effort"
+                    bestBlob = audioBlob;
+                    bestDuration = duration;
+                    bestSpeedFactor = speedFactor;
+
+                    // E. Check Constraints (1.1x - 1.5x)
+                    if (speedFactor >= 1.1 && speedFactor <= 1.5) {
+                        success = true;
+                        console.log(`Seg ${i + 1}: Success! Speed ${speedFactor.toFixed(2)}x is in range.`);
+                    } else {
+                        // F. Refine Text
+                        if (attempts < MAX_ATTEMPTS) {
+                            console.log(`Seg ${i + 1}: Invalid speed ${speedFactor.toFixed(2)}x. Refining...`);
+
+                            const provider = apiKeys.gemini ? 'gemini' : 'openai';
+                            const apiKey = apiKeys.gemini || apiKeys.openai;
+
+                            const refined = await refineTextWithAI({
+                                text: currentText,
+                                currentSpeed: speedFactor,
+                                targetSpeedMin: 1.1,
+                                targetSpeedMax: 1.5,
+                                apiKey,
+                                provider
+                            });
+
+                            if (refined === currentText) {
+                                console.warn("AI returned same text, breaking loop");
+                                break;
+                            }
+                            currentText = refined;
+                        }
+                    }
+                }
+
+                if (!success) {
+                    console.warn(`Seg ${i + 1}: Failed to meet constraints after ${attempts} attempts. Final speed: ${bestSpeedFactor.toFixed(2)}x`);
+                    warning = true;
+                }
+
+                // Final text update in the segment list?
+                // We should update the translated segment text to reflect the actual spoken text
+                translated[i].translatedText = currentText;
+
+                // Add to processed list
+                processedSegments.push({
+                    id: seg.id,
+                    audioBlob: bestBlob!,
+                    duration: bestDuration,
+                    targetDuration: targetDuration,
+                    startTime: seg.start,
+                    needsStretch: true, // We always stretch to fit exactly, but now we know it's within/close to good range
+                    appliedSpeedFactor: 0 // Will be set during adjustment
+                });
+            }
+
+            // Update state with final texts
+            setTranslatedSegments([...translated]);
+
+            // 6. Apply Final Speed Adjustment
+            setProgress({ stage: 'processing', progress: 90, message: 'Aplicando ajustes finais de velocidade...' });
+
+            for (let i = 0; i < processedSegments.length; i++) {
+                const seg = processedSegments[i];
+                try {
+                    // We calculated speedFactor based on raw duration / target.
+                    // Now actually apply it.
+                    const speedFactor = seg.duration / seg.targetDuration;
+
+                    // Speed factor might be < 1.1 or > 1.5 if refinement failed, but we apply it anyway to sync.
+                    const adjustedBlob = await adjustAudioSpeed(seg.audioBlob, speedFactor);
+
+                    seg.audioBlob = adjustedBlob;
+                    seg.duration = seg.targetDuration; // Now it fits
+                    seg.needsStretch = false;
+                    seg.appliedSpeedFactor = speedFactor;
+
+                } catch (e) {
+                    console.error(`Failed final stretch seg ${i}:`, e);
+                }
+            }
+
+            setAudioSegments(processedSegments);
+
+            // 7. Assemble
+            setProgress({ stage: 'processing', progress: 95, message: 'Montando projeto...' });
+
+            const totalDuration = await new Promise<number>((resolve) => {
+                const video = document.createElement('video');
+                video.onloadedmetadata = () => resolve(video.duration);
+                video.src = URL.createObjectURL(processedVideoBlob);
+            });
+
+            const finalBlob = await assembleDubbingOnly(
+                processedSegments.map(s => ({
+                    blob: s.audioBlob,
+                    start: s.startTime
+                })),
+                totalDuration
+            );
+
+            setFinalAudioBlob(finalBlob);
+
+            // 8. Save
+            // 8. Save (Non-blocking)
+            try {
+                const projectId = await createProject({
+                    name: projectName,
+                    userId: user.uid,
+                    sourceFileName: sourceFile.name,
+                    transcriptSegments: transcript,
+                    translatedSegments: translated,
+                    duration: totalDuration,
+                    selectedVoice: selectedVoice
+                });
+
+                setCurrentProject({
+                    id: projectId,
+                    name: projectName,
+                    userId: user.uid,
+                    sourceFileName: sourceFile.name,
+                    transcriptSegments: transcript,
+                    translatedSegments: translated,
+                    duration: totalDuration,
+                    selectedVoice: selectedVoice,
+                    createdAt: new Date() as any,
+                    updatedAt: new Date() as any
+                });
+            } catch (saveError: any) {
+                console.error("Failed to save project to DB, continuing in temporary mode:", saveError);
+                // Create temp project state so editor works
+                setCurrentProject({
+                    id: `temp_${Date.now()}`,
+                    name: projectName,
+                    userId: user.uid,
+                    sourceFileName: sourceFile.name,
+                    transcriptSegments: transcript,
+                    translatedSegments: translated,
+                    duration: totalDuration,
+                    selectedVoice: selectedVoice,
+                    createdAt: new Date() as any,
+                    updatedAt: new Date() as any
+                });
+            }
+
+            // Note: We should probably save the processed 0.9x video as the source for this project?
+            // For now, let's upload the ORIGINAL sourceFile (user might want to see original?)
+            // OR should we replace source with processedVideoBlob? 
+            // The dubbing is synced to the 0.9x video. If we show original, it will be out of sync.
+            // Let's replace the sourceFile in state with the processed one for the editor!
+            setSourceFile(new File([processedVideoBlob], 'slowed_base.mp4', { type: 'video/mp4' }));
+
+            setProgress(null);
+            setStage('editor');
+            setCurrentView('editor');
+
+        } catch (error: any) {
+            console.error('Advanced Process Error:', error);
+            alert(`Erro: ${error.message}`);
+            setStage('setup');
+            setCurrentView('advanced-dubbing');
+            setProgress(null);
+        }
+    };
+
     const handleNewProject = () => {
         setShowProjectList(false);
         setCurrentProject(null);
@@ -661,6 +951,14 @@ export default function MainPage() {
             {currentView === 'douyin-dubbing' && (
                 <DouyinDubbingView
                     onStart={handleProcessDouyinProject}
+                    projectName={projectName}
+                    onProjectNameChange={setProjectName}
+                    onBackToProjects={handleBackToProjects}
+                />
+            )}
+            {currentView === 'advanced-dubbing' && (
+                <AdvancedDubbingView
+                    onStart={handleProcessAdvancedProject}
                     projectName={projectName}
                     onProjectNameChange={setProjectName}
                     onBackToProjects={handleBackToProjects}

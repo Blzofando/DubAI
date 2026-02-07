@@ -48,7 +48,14 @@ INPUT:
 ${JSON.stringify(segmentsData, null, 2)}
 
 OUTPUT FORMAT:
-[{"id": "...", "translatedText": "..."}]`;
+{
+  "translations": [
+    {
+        "id": "...",
+        "translatedText": "..."
+    }
+  ]
+}`;
 
     onProgress?.('Enviando para OpenAI...');
 

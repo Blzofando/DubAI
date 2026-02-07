@@ -169,7 +169,12 @@ export default function SrtDubbingView({ onBack }: { onBack: () => void }) {
     }
 
     const startDubbing = async () => {
-        if (!segments.length || !apiKeys.gemini) return;
+        if (!segments.length) return;
+        if (!apiKeys.gemini) {
+            alert('Configure sua chave API do Gemini nas configurações (ícone de engrenagem) para continuar.');
+            return;
+        }
+
         setIsProcessing(true);
         setCurrentStep('Gerando áudio inicial (Batch)...');
         setOverallProgress(5);

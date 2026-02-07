@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { TranscriptSegment, TranslatedSegment } from '@/types';
 
-const MODEL_NAME = 'gemini-3-pro-preview';
+const MODEL_NAME = 'gemini-2.5-flash';
 
 /**
  * Transcreve áudio e retorna segmentos com timestamps

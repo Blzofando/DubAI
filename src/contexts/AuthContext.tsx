@@ -18,6 +18,7 @@ interface AuthContextType {
     signUp: (email: string, password: string) => Promise<void>;
     signIn: (email: string, password: string) => Promise<void>;
     signInWithGoogle: () => Promise<void>;
+    signInAsGuest: () => Promise<void>;
     signOut: () => Promise<void>;
 }
 
@@ -34,15 +35,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return;
         }
 
+        // Safety timeout: If Firebase takes too long (e.g. network blocked), 
+        // release the loading state so user can use Guest Mode.
+        const safetyTimeout = setTimeout(() => {
+            console.warn('Firebase auth timed out - releasing UI for offline mode');
+            setLoading(false);
+        }, 2000);
+
         try {
             const unsubscribe = onAuthStateChanged(auth, (user) => {
+                clearTimeout(safetyTimeout);
                 setUser(user);
                 setLoading(false);
             });
 
-            return unsubscribe;
+            return () => {
+                clearTimeout(safetyTimeout);
+                unsubscribe();
+            };
         } catch (error) {
             console.error('Auth state change error:', error);
+            clearTimeout(safetyTimeout);
             setLoading(false);
         }
     }, []);
@@ -84,7 +97,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     };
 
+    const signInAsGuest = async () => {
+        setLoading(true);
+        // Create a dummy user object for guest
+        const guestUser: any = {
+            uid: `guest-${Date.now()}`,
+            email: 'guest@offline.local',
+            displayName: 'Convidado (Offline)',
+            emailVerified: true,
+            isAnonymous: true,
+            metadata: {},
+            providerData: [],
+            refreshToken: '',
+            tenantId: null,
+            delete: async () => { },
+            getIdToken: async () => 'guest-token',
+            getIdTokenResult: async () => ({ token: 'guest-token' } as any),
+            reload: async () => { },
+            toJSON: () => ({})
+        };
+        setUser(guestUser);
+        setLoading(false);
+    };
+
     const signOut = async () => {
+        if (user?.isAnonymous && user.email === 'guest@offline.local') {
+            setUser(null);
+            return;
+        }
+
         if (!auth || !auth.app) {
             throw new Error('Firebase não configurado.');
         }
@@ -101,6 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signUp,
         signIn,
         signInWithGoogle,
+        signInAsGuest,
         signOut,
     };
 

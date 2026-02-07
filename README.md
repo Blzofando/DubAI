@@ -10,6 +10,7 @@ Aplicação profissional de dublagem automática de vídeos/áudios usando IA.
 - **Google Gemini API** (gemini-2.0-flash-exp) para transcrição e tradução
 - **OpenAI API** (gpt-4o-mini-tts) para síntese de voz
 - **Lucide React** para ícones
+ffmpeg -i 11.mp3 -filter:a "atempo=0.9" output.mp3
 
 ## Funcionalidades
 

@@ -22,6 +22,11 @@ const PROJECTS_COLLECTION = 'projects';
  * Criar novo projeto
  */
 export async function createProject(data: CreateProjectData): Promise<string> {
+    if (data.userId.startsWith('guest-')) {
+        console.log('[Guest] Skipping Firestore createProject');
+        return `guest-project-${Date.now()}`;
+    }
+
     try {
         const projectRef = doc(collection(db, PROJECTS_COLLECTION));
         const projectId = projectRef.id;
@@ -48,6 +53,13 @@ export async function createProject(data: CreateProjectData): Promise<string> {
  * Atualizar projeto existente
  */
 export async function updateProject(projectId: string, data: Partial<Project>): Promise<void> {
+    // Check if we are updating a guest project (can't easily check userId here without passing it, 
+    // but usually we can assume if the ID looks like guest-project it is one)
+    if (projectId.startsWith('guest-project-')) {
+        console.log('[Guest] Skipping Firestore updateProject');
+        return;
+    }
+
     try {
         const projectRef = doc(db, PROJECTS_COLLECTION, projectId);
         await updateDoc(projectRef, {
@@ -64,6 +76,10 @@ export async function updateProject(projectId: string, data: Partial<Project>): 
  * Buscar projeto por ID
  */
 export async function getProject(projectId: string): Promise<Project | null> {
+    if (projectId.startsWith('guest-project-')) {
+        return null; // Or return a mock if needed, but usually guest data is in memory
+    }
+
     try {
         const projectRef = doc(db, PROJECTS_COLLECTION, projectId);
         const projectSnap = await getDoc(projectRef);
@@ -86,6 +102,12 @@ export async function getProject(projectId: string): Promise<Project | null> {
  * Listar todos os projetos do usuário
  */
 export async function getUserProjects(userId: string): Promise<Project[]> {
+    if (!userId) return [];
+    if (userId.startsWith('guest-')) {
+        return []; // Guests have no saved projects list
+    }
+
+
     try {
         const projectsQuery = query(
             collection(db, PROJECTS_COLLECTION),
@@ -108,6 +130,10 @@ export async function getUserProjects(userId: string): Promise<Project[]> {
  * Deletar projeto
  */
 export async function deleteProject(projectId: string, userId: string): Promise<void> {
+    if (!userId) throw new Error('User ID required');
+    if (userId.startsWith('guest-')) return;
+
+
     try {
         // Delete Firestore document
         const projectRef = doc(db, PROJECTS_COLLECTION, projectId);
@@ -138,6 +164,10 @@ export async function uploadFile(
  * Verificar se nome do projeto já existe para o usuário
  */
 export async function projectNameExists(userId: string, projectName: string): Promise<boolean> {
+    if (!userId) return false;
+    if (userId.startsWith('guest-')) return false;
+
+
     try {
         const projectsQuery = query(
             collection(db, PROJECTS_COLLECTION),

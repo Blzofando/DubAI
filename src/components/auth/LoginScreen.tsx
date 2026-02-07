@@ -12,7 +12,7 @@ export default function LoginScreen() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
-    const { signIn, signUp, signInWithGoogle } = useAuth();
+    const { signIn, signUp, signInWithGoogle, signInAsGuest } = useAuth();
     const { theme, toggleTheme } = useApp();
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -147,6 +147,23 @@ export default function LoginScreen() {
                         Continuar com Google
                     </button>
                 </div>
+
+                {/* Guest Sign In */}
+                <div className="mt-4">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            // @ts-ignore - signInAsGuest exists in context but interface might lag in hot reload
+                            signInAsGuest();
+                        }}
+                        disabled={loading}
+                        className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-3 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 border border-gray-200"
+                    >
+                        <UserPlus size={20} className="text-gray-500" />
+                        Continuar como Convidado (Offline)
+                    </button>
+                </div>
+
 
                 {/* Toggle Sign Up/Sign In */}
                 <div className="mt-6 text-center text-sm text-gray-600">
