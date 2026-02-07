@@ -1,38 +1,14 @@
 import type { TranslatedSegment, AudioSegment } from '@/types';
+import { generateSpeechClient, getAudioDuration } from './ttsClient';
 
+/**
+ * Generate speech using client-side WebSocket (bypasses Vercel IP blocking)
+ */
 export async function generateSpeech(
     text: string,
     voice: string = 'pt-BR-AntonioNeural'
 ): Promise<Blob> {
-    // Create abort controller with 60s timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutos
-
-    try {
-        const response = await fetch('/api/tts', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ text, voice }),
-            signal: controller.signal // Add timeout signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || 'Failed to generate speech');
-        }
-
-        return await response.blob();
-    } catch (error: any) {
-        clearTimeout(timeoutId);
-        if (error.name === 'AbortError') {
-            throw new Error('TTS timeout (60s) - texto muito longo ou serviço lento');
-        }
-        throw error;
-    }
+    return generateSpeechClient(text, voice);
 }
 
 /**
@@ -52,7 +28,7 @@ export async function processQueue(
         onProgress?.(i + 1, segments.length, segment.id);
 
         try {
-            // Gerar TTS
+            // Gerar TTS via client-side WebSocket
             const audioBlob = await generateSpeech(segment.translatedText, voice);
 
             // Calcular duração real do áudio gerado
@@ -82,17 +58,6 @@ export async function processQueue(
     }
 
     return audioSegments;
-}
-
-function getAudioDuration(audioBlob: Blob): Promise<number> {
-    return new Promise((resolve, reject) => {
-        const audio = new Audio();
-        audio.onloadedmetadata = () => {
-            resolve(audio.duration);
-        };
-        audio.onerror = reject;
-        audio.src = URL.createObjectURL(audioBlob);
-    });
 }
 
 function delay(ms: number): Promise<void> {
