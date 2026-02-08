@@ -240,7 +240,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             onProgress?.(`Ajustando velocidade (${speedFactor.toFixed(2)}x)...`);
 
             // Import FFmpeg function dynamically
-            const { adjustAudioSpeed, loadFFmpeg } = await import('@/services/ffmpeg');
+            const { adjustAudioSpeed, loadFFmpeg, getAudioDuration } = await import('@/services/ffmpeg');
 
             // Ensure FFmpeg is loaded
             await loadFFmpeg();
@@ -248,12 +248,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
             // Apply tempo adjustment
             const adjustedBlob = await adjustAudioSpeed(segment.audioBlob, speedFactor, onProgress);
 
-            // Update the segment with new blob and duration
-            updateAudioSegmentBlob(id, adjustedBlob, targetDuration);
+            // Get the ACTUAL duration of the adjusted audio to ensure accuracy
+            const actualDuration = await getAudioDuration(adjustedBlob);
 
-            // Also update translatedSegments to reflect the change
-            setTranslatedSegments(prev => prev.map(seg =>
-                seg.id === id ? { ...seg, end: seg.start + targetDuration } : seg
+            // Update the segment with new blob, actual duration, and applied speed factor
+            setAudioSegments(prev => prev.map(seg =>
+                seg.id === id ? {
+                    ...seg,
+                    audioBlob: adjustedBlob,
+                    duration: actualDuration,
+                    targetDuration: targetDuration,
+                    needsStretch: false,
+                    appliedSpeedFactor: speedFactor
+                } : seg
             ));
 
             onProgress?.('✅ Velocidade ajustada com sucesso!');

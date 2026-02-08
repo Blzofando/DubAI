@@ -2,7 +2,7 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { useApp } from '@/contexts/AppContext';
-import { Volume2, VolumeX } from 'lucide-react';
+import { Volume2, VolumeX, MousePointer2, Plus, Scissors } from 'lucide-react';
 import SegmentBlock from './SegmentBlock';
 import WaveformVisualizer from './WaveformVisualizer';
 
@@ -39,7 +39,15 @@ export default function TimelineContainer({
     onToggleMuteDubbing,
     filteredSegmentIds
 }: TimelineContainerProps) {
-    const { translatedSegments, setTranslatedSegments, updateAudioSegmentTiming, transcriptSegments, applySpeedAdjustment, addToSpeedQueue, sourceFile, audioSegments } = useApp();
+    const { translatedSegments, setTranslatedSegments, updateAudioSegmentTiming, transcriptSegments, applySpeedAdjustment, addToSpeedQueue, sourceFile, audioSegments, setAudioSegments } = useApp();
+
+    // Tool State
+    const [currentTool, setCurrentTool] = useState<'select' | 'add-block' | 'split'>('select');
+
+    // Drawing Block State (for add-block tool)
+    const [isDrawingBlock, setIsDrawingBlock] = useState(false);
+    const [drawingBlockStart, setDrawingBlockStart] = useState<number | null>(null);
+    const [drawingBlockEnd, setDrawingBlockEnd] = useState<number | null>(null);
 
     console.log('TimelineContainer render. Filtered IDs:', filteredSegmentIds?.size);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -147,9 +155,21 @@ export default function TimelineContainer({
             const x = e.clientX - rect.left + containerRef.current.scrollLeft;
             const y = e.clientY - rect.top;
 
-            setIsBoxSelecting(true);
-            setBoxStart({ x, y });
-            setBoxCurrent({ x, y });
+            // Check if add-block tool is active and mouse is in dubbing track area
+            if (currentTool === 'add-block' && y > 120) { // Dubbing track starts around y=120
+                const time = x / zoom;
+                setIsDrawingBlock(true);
+                setDrawingBlockStart(time);
+                setDrawingBlockEnd(time);
+                return;
+            }
+
+            // Regular box selection for select tool
+            if (currentTool === 'select') {
+                setIsBoxSelecting(true);
+                setBoxStart({ x, y });
+                setBoxCurrent({ x, y });
+            }
         }
     };
 
@@ -321,11 +341,157 @@ export default function TimelineContainer({
         };
     }, [draggingId, dragOffset, resizingId, isBoxSelecting, boxStart, boxCurrent, zoom, translatedSegments, setTranslatedSegments, addToSpeedQueue, updateAudioSegmentTiming, onMultiSelect, selectedIds]);
 
+    // Drawing block handlers
+    useEffect(() => {
+        if (!isDrawingBlock) return;
+
+        const handleDrawingMove = (e: MouseEvent) => {
+            if (containerRef.current && drawingBlockStart !== null) {
+                const rect = containerRef.current.getBoundingClientRect();
+                const x = e.clientX - rect.left + containerRef.current.scrollLeft;
+                const time = Math.max(0, x / zoom);
+                setDrawingBlockEnd(time);
+            }
+        };
+
+        const handleDrawingUp = () => {
+            if (drawingBlockStart !== null && drawingBlockEnd !== null) {
+                const startTime = Math.min(drawingBlockStart, drawingBlockEnd);
+                const endTime = Math.max(drawingBlockStart, drawingBlockEnd);
+                const duration = endTime - startTime;
+
+                if (duration >= 0.3) { // Minimum 0.3s block
+                    const newId = `new-${Date.now()}`;
+                    const newSegment = {
+                        id: newId,
+                        start: startTime,
+                        end: endTime,
+                        text: '',
+                        translatedText: '(novo texto)',
+                        targetCharCount: Math.round(duration * 15), // ~15 chars/sec
+                        actualCharCount: 12,
+                        language: 'pt-BR'
+                    };
+
+                    const newTranslatedSegments = [...translatedSegments, newSegment].sort((a, b) => a.start - b.start);
+                    setTranslatedSegments(newTranslatedSegments);
+
+                    const newAudioSegment = {
+                        id: newId,
+                        audioBlob: new Blob(),
+                        duration: duration,
+                        targetDuration: duration,
+                        startTime: startTime,
+                        needsStretch: true
+                    };
+                    const newAudioSegments = [...audioSegments, newAudioSegment];
+                    setAudioSegments(newAudioSegments);
+
+                    onMultiSelect(new Set([newId]), newId);
+                }
+            }
+
+            setIsDrawingBlock(false);
+            setDrawingBlockStart(null);
+            setDrawingBlockEnd(null);
+            setCurrentTool('select'); // Switch back to select after creating
+        };
+
+        window.addEventListener('mousemove', handleDrawingMove);
+        window.addEventListener('mouseup', handleDrawingUp);
+
+        return () => {
+            window.removeEventListener('mousemove', handleDrawingMove);
+            window.removeEventListener('mouseup', handleDrawingUp);
+        };
+    }, [isDrawingBlock, drawingBlockStart, drawingBlockEnd, zoom, translatedSegments, audioSegments, setTranslatedSegments, setAudioSegments, onMultiSelect]);
+
     return (
         <div className="w-full h-full flex flex-col bg-gray-900 border-t border-gray-800 select-none">
             {/* Toolbar / Time Header */}
             <div className="h-8 bg-gray-800 border-b border-gray-700 flex items-center px-4 justify-between">
-                <span className="text-xs text-gray-400">Total: {totalDuration.toFixed(0)}s</span>
+                <div className="flex items-center gap-4">
+                    <span className="text-xs text-gray-400">Total: {totalDuration.toFixed(0)}s</span>
+
+                    {/* Tool Selection */}
+                    <div className="flex items-center gap-1 bg-gray-700/50 rounded-lg p-0.5">
+                        <button
+                            onClick={() => setCurrentTool('select')}
+                            className={`p-1.5 rounded transition-colors ${currentTool === 'select' ? 'bg-primary-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                            title="Selecionar (V)"
+                        >
+                            <MousePointer2 size={14} />
+                        </button>
+                        <button
+                            onClick={() => setCurrentTool('add-block')}
+                            className={`p-1.5 rounded transition-colors ${currentTool === 'add-block' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                            title="Adicionar Bloco (A)"
+                        >
+                            <Plus size={14} />
+                        </button>
+                        <button
+                            onClick={() => {
+                                // Split at current playhead
+                                const segmentAtPlayhead = translatedSegments.find(s => s.start < currentTime && s.end > currentTime);
+                                if (segmentAtPlayhead) {
+                                    const splitTime = currentTime;
+                                    const originalDuration = segmentAtPlayhead.end - segmentAtPlayhead.start;
+                                    const firstPartDuration = splitTime - segmentAtPlayhead.start;
+                                    const secondPartDuration = segmentAtPlayhead.end - splitTime;
+
+                                    // Split text proportionally by words
+                                    const words = segmentAtPlayhead.translatedText.split(' ');
+                                    const splitIndex = Math.round(words.length * (firstPartDuration / originalDuration));
+                                    const firstText = words.slice(0, splitIndex).join(' ');
+                                    const secondText = words.slice(splitIndex).join(' ');
+
+                                    // Create two new segments
+                                    const firstSegment = {
+                                        ...segmentAtPlayhead,
+                                        id: `${segmentAtPlayhead.id}-a`,
+                                        end: splitTime,
+                                        translatedText: firstText,
+                                        actualCharCount: firstText.length
+                                    };
+                                    const secondSegment = {
+                                        ...segmentAtPlayhead,
+                                        id: `${segmentAtPlayhead.id}-b`,
+                                        start: splitTime,
+                                        translatedText: secondText,
+                                        actualCharCount: secondText.length
+                                    };
+
+                                    // Update translatedSegments
+                                    const newSegments = translatedSegments
+                                        .filter(s => s.id !== segmentAtPlayhead.id)
+                                        .concat([firstSegment, secondSegment])
+                                        .sort((a, b) => a.start - b.start);
+                                    setTranslatedSegments(newSegments);
+
+                                    // Update audioSegments if exists
+                                    const audioSeg = audioSegments.find(a => a.id === segmentAtPlayhead.id);
+                                    if (audioSeg) {
+                                        const newAudioSegments = audioSegments
+                                            .filter(s => s.id !== segmentAtPlayhead.id)
+                                            .concat([
+                                                { ...audioSeg, id: firstSegment.id, duration: firstPartDuration, targetDuration: firstPartDuration, audioBlob: new Blob(), needsStretch: true },
+                                                { ...audioSeg, id: secondSegment.id, startTime: splitTime, duration: secondPartDuration, targetDuration: secondPartDuration, audioBlob: new Blob(), needsStretch: true }
+                                            ]);
+                                        setAudioSegments(newAudioSegments);
+                                    }
+
+                                    alert(`✅ Bloco dividido em ${splitTime.toFixed(2)}s`);
+                                } else {
+                                    alert('Posicione o playhead sobre um bloco para dividir');
+                                }
+                            }}
+                            className="p-1.5 rounded text-gray-400 hover:text-white hover:bg-amber-600 transition-colors"
+                            title="Dividir no Playhead"
+                        >
+                            <Scissors size={14} />
+                        </button>
+                    </div>
+                </div>
                 <div className="flex gap-2">
                     <button onClick={() => setZoom(z => Math.max(10, z - 10))} className="text-xs text-gray-400 hover:text-white">-</button>
                     <span className="text-xs text-gray-400">{zoom}px/s</span>
@@ -423,6 +589,20 @@ export default function TimelineContainer({
                         {/* Dubbing Track */}
                         <div className="group relative pointer-events-auto">
                             <div className="h-24 bg-gray-800/30 rounded-lg relative border border-gray-700/50">
+                                {/* Drawing Block Preview */}
+                                {isDrawingBlock && drawingBlockStart !== null && drawingBlockEnd !== null && (
+                                    <div
+                                        className="absolute top-1 bottom-1 bg-green-500/30 border-2 border-green-500 border-dashed rounded z-50"
+                                        style={{
+                                            left: `${Math.min(drawingBlockStart, drawingBlockEnd) * zoom}px`,
+                                            width: `${Math.abs(drawingBlockEnd - drawingBlockStart) * zoom}px`
+                                        }}
+                                    >
+                                        <div className="absolute inset-0 flex items-center justify-center text-green-400 text-xs font-bold">
+                                            {Math.abs(drawingBlockEnd - drawingBlockStart).toFixed(1)}s
+                                        </div>
+                                    </div>
+                                )}
                                 {translatedSegments.map(seg => {
                                     if (filteredSegmentIds && !filteredSegmentIds.has(seg.id)) return null;
 

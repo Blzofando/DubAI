@@ -79,6 +79,12 @@ export async function adjustAudioSpeed(
     if (!ffmpegInstance) throw new Error('FFmpeg não carregado');
     if (speedFactor <= 0) throw new Error('Speed factor deve ser > 0');
 
+    // If speed factor is essentially 1.0, skip processing entirely to avoid empty filter chain error
+    if (Math.abs(speedFactor - 1.0) < 0.02) {
+        onProgress?.('✅ Sem ajuste necessário!');
+        return audioBlob;
+    }
+
     onProgress?.(`Ajustando velocidade (${speedFactor.toFixed(2)}x)...`);
 
     // atempo filter tem limite de 0.5x - 2.0x
@@ -275,10 +281,11 @@ export async function removeSilence(
     try {
         await ffmpegInstance.writeFile(inputFile, await fetchFile(audioBlob));
 
-        // silenceremove filter with conservative thresholds
+        // silenceremove filter - ONLY trim start silence, preserve end to avoid cutting words
+        // stop_periods=0 means don't remove any silence from the end
         await ffmpegInstance.exec([
             '-i', inputFile,
-            '-af', 'silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:stop_periods=-1:stop_duration=0.3:stop_threshold=-50dB',
+            '-af', 'silenceremove=start_periods=1:start_duration=0.05:start_threshold=-45dB:stop_periods=0',
             '-ar', '44100',
             '-ac', '2',
             outputFile

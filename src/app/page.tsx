@@ -185,11 +185,14 @@ export default function MainPage() {
                         const speedFactor = seg.duration / seg.targetDuration;
                         const adjustedBlob = await adjustAudioSpeed(seg.audioBlob, speedFactor);
 
-                        // Update segment with adjusted audio and save the applied speed factor
+                        // Get the ACTUAL duration of the adjusted audio
+                        const actualDuration = await getAudioDuration(adjustedBlob);
+
+                        // Update segment with adjusted audio and REAL duration
                         seg.audioBlob = adjustedBlob;
-                        seg.duration = seg.targetDuration;
+                        seg.duration = actualDuration; // Use actual, not target
                         seg.needsStretch = false;
-                        seg.appliedSpeedFactor = speedFactor; // Save the speed that was applied
+                        seg.appliedSpeedFactor = speedFactor;
                     } catch (error) {
                         console.warn(`Não foi possível ajustar velocidade do segmento ${i + 1}:`, error);
                         // Keep needsStretch = true so user can adjust manually in editor
@@ -362,8 +365,11 @@ export default function MainPage() {
                     const speedFactor = seg.duration / seg.targetDuration;
                     const adjustedBlob = await adjustAudioSpeed(seg.audioBlob, speedFactor);
 
+                    // Get actual duration from adjusted audio
+                    const actualDuration = await getAudioDuration(adjustedBlob);
+
                     seg.audioBlob = adjustedBlob;
-                    seg.duration = seg.targetDuration;
+                    seg.duration = actualDuration; // Use actual, not target
                     seg.appliedSpeedFactor = speedFactor;
                     seg.needsStretch = false;
                 } catch (error) {
@@ -782,8 +788,11 @@ export default function MainPage() {
                     // Speed factor might be < 1.1 or > 1.5 if refinement failed, but we apply it anyway to sync.
                     const adjustedBlob = await adjustAudioSpeed(seg.audioBlob, speedFactor);
 
+                    // Get actual duration from adjusted audio
+                    const actualDuration = await getAudioDuration(adjustedBlob);
+
                     seg.audioBlob = adjustedBlob;
-                    seg.duration = seg.targetDuration; // Now it fits
+                    seg.duration = actualDuration; // Use actual, not target
                     seg.needsStretch = false;
                     seg.appliedSpeedFactor = speedFactor;
 
